@@ -121,12 +121,20 @@ export function App() {
             : '此範圍內未找到更多符合條件的地圖資料，可試著放大範圍或換個關鍵字。'
         );
       } catch (err) {
-        if (!silent) {
-          setMapDbStatus(
-            err instanceof Error && err.message.includes('Google')
-              ? err.message
-              : '即時地圖資料庫連線逾時，目前顯示內建與已快取之景點資料。'
-          );
+        const gmapsErrMsg = err instanceof Error ? err.message : 'Google Maps API 查詢失敗';
+        // Fallback to OpenStreetMap so the map still populates with 200+ POIs
+        try {
+          const fallback = await fetchLiveMapPois(config.geoFilter, config.city, keyword);
+          setLivePois((prev) => {
+            const byId = new Map(prev.map((p) => [p.id, p]));
+            fallback.forEach((p) => byId.set(p.id, p));
+            return Array.from(byId.values());
+          });
+          setMapDbStatus(`${gmapsErrMsg}（已自動切換回 OpenStreetMap 載入 ${fallback.length} 筆景點）`);
+        } catch {
+          if (!silent) {
+            setMapDbStatus(gmapsErrMsg);
+          }
         }
       } finally {
         setIsFetchingMap(false);

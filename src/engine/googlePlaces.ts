@@ -20,17 +20,6 @@ export function saveGoogleMapsApiKey(key: string): void {
   }
 }
 
-interface GooglePlaceV1 {
-  id: string;
-  displayName?: { text: string };
-  formattedAddress?: string;
-  location?: { latitude: number; longitude: number };
-  types?: string[];
-  rating?: number;
-  userRatingCount?: number;
-  priceLevel?: string;
-}
-
 function mapGoogleTypesToCategories(types: string[] = []): {
   categories: CategoryId[];
   isIndoor: boolean;
@@ -55,7 +44,7 @@ function mapGoogleTypesToCategories(types: string[] = []): {
     suggestedMinutes = 90;
     avgCostNtd = 150;
   }
-  if (t.has('historical_landmark') || t.has('cultural_landmark') || t.has('hindu_temple') || t.has('buddhist_temple')) {
+  if (t.has('historical_landmark') || t.has('cultural_landmark') || t.has('hindu_temple') || t.has('buddhist_temple') || t.has('place_of_worship')) {
     categories.push('heritage');
     isIndoor = false;
     suggestedMinutes = 70;
@@ -96,12 +85,47 @@ function mapGoogleTypesToCategories(types: string[] = []): {
   return { categories, isIndoor, suggestedMinutes, avgCostNtd };
 }
 
+let loadedKey = '';
+let sdkPromise: Promise<void> | null = null;
+
+function loadGoogleMapsSdk(apiKey: string): Promise<void> {
+  const g = window as unknown as { google?: { maps?: { places?: unknown } } };
+  if (g.google?.maps?.places && loadedKey === apiKey) {
+    return Promise.resolve();
+  }
+  if (sdkPromise && loadedKey === apiKey) {
+    return sdkPromise;
+  }
+
+  loadedKey = apiKey;
+  sdkPromise = new Promise((resolve, reject) => {
+    const existing = document.getElementById('gmaps-places-sdk');
+    if (existing) existing.remove();
+
+    const script = document.createElement('script');
+    script.id = 'gmaps-places-sdk';
+    script.async = true;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=zh-TW`;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('無法載入 Google Maps JS SDK，請檢查 API Key 或網域限制設定。'));
+    document.head.appendChild(script);
+  });
+  return sdkPromise;
+}
+
 export async function fetchGooglePlacesPois(
   apiKey: string,
   geoFilter: GeoFilter,
   city: 'taichung' | 'taipei',
   keyword?: string
 ): Promise<POI[]> {
+  const trimmedKey = apiKey.trim();
+  if (!trimmedKey.startsWith('AIza')) {
+    throw new Error(
+      '金鑰格式不正確：請填入 Google Cloud Console「憑證」中以 AIza 開頭的 API 金鑰（並非 OAuth 用戶端 ID）。'
+    );
+  }
+
   const center =
     geoFilter.mode === 'radius'
       ? geoFilter.center
@@ -122,86 +146,129 @@ export async function fetchGooglePlacesPois(
       ? Math.min(25000, Math.round(geoFilter.maxDistanceKm * 1000))
       : 8000;
 
-  const trimmed = keyword?.trim();
-  const fieldMask =
-    'places.id,places.displayName,places.formattedAddress,places.location,places.types,places.rating,places.userRatingCount';
+  // Use official Google Maps JS SDK PlacesService (works with standard browser API keys)
+  await loadGoogleMapsSdk(trimmedKey);
 
-  const url = trimmed
-    ? 'https://places.googleapis.com/v1/places:searchText'
-    : 'https://places.googleapis.com/v1/places:searchNearby';
-
-  const body = trimmed
-    ? {
-        textQuery: trimmed,
-        languageCode: 'zh-TW',
-        maxResultCount: 20,
-        locationBias: {
-          circle: {
-            center: { latitude: center.lat, longitude: center.lng },
-            radius: radiusMeters,
-          },
-        },
-      }
-    : {
-        includedTypes: [
-          'tourist_attraction',
-          'museum',
-          'park',
-          'restaurant',
-          'cafe',
-          'shopping_mall',
-          'historical_landmark',
-        ],
-        languageCode: 'zh-TW',
-        maxResultCount: 20,
-        locationRestriction: {
-          circle: {
-            center: { latitude: center.lat, longitude: center.lng },
-            radius: radiusMeters,
-          },
-        },
+  const g = window as unknown as {
+    google?: {
+      maps?: {
+        LatLng: new (lat: number, lng: number) => unknown;
+        places?: {
+          PlacesService: new (attrContainer: HTMLElement) => {
+            nearbySearch: (
+              req: Record<string, unknown>,
+              cb: (results: Array<{
+                place_id?: string;
+                name?: string;
+                vicinity?: string;
+                formatted_address?: string;
+                geometry?: { location?: { lat: () => number; lng: () => number } };
+                types?: string[];
+                rating?: number;
+                user_ratings_total?: number;
+              }> | null, status: string) => void
+            ) => void;
+            textSearch: (
+              req: Record<string, unknown>,
+              cb: (results: Array<{
+                place_id?: string;
+                name?: string;
+                vicinity?: string;
+                formatted_address?: string;
+                geometry?: { location?: { lat: () => number; lng: () => number } };
+                types?: string[];
+                rating?: number;
+                user_ratings_total?: number;
+              }> | null, status: string) => void
+            ) => void;
+          };
+        };
       };
+    };
+  };
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': apiKey.trim(),
-      'X-Goog-FieldMask': fieldMask,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Google Places API 錯誤 (${res.status}): ${errText}`);
+  if (!g.google?.maps?.places?.PlacesService) {
+    throw new Error('Google Maps Places 服務尚未啟用，請確認已啟用 Places API 與 Maps JavaScript API。');
   }
 
-  const json = (await res.json()) as { places?: GooglePlaceV1[] };
-  const places = json.places ?? [];
+  const dummyDiv = document.createElement('div');
+  const service = new g.google.maps.places.PlacesService(dummyDiv);
+  const location = new g.google.maps.LatLng(center.lat, center.lng);
+  const trimmedQuery = keyword?.trim();
 
-  return places
-    .filter((p) => p.displayName?.text && p.location)
-    .map((p) => {
-      const mapped = mapGoogleTypesToCategories(p.types);
-      const ratingStr = p.rating
-        ? `⭐ ${p.rating.toFixed(1)} (${p.userRatingCount ?? 0} 則評論)`
-        : 'Google Maps 景點';
-      return {
-        id: `gmap-${p.id}`,
-        city,
-        district: p.formattedAddress?.slice(0, 14) || 'Google Maps',
-        name: p.displayName!.text,
-        lat: p.location!.latitude,
-        lng: p.location!.longitude,
-        categories: mapped.categories,
-        suggestedMinutes: mapped.suggestedMinutes,
-        avgCostNtd: mapped.avgCostNtd,
-        openMinutes: 480,
-        closeMinutes: 1320,
-        closedDays: [],
-        isIndoor: mapped.isIndoor,
-        highlight: `[Google Maps] ${ratingStr}${p.formattedAddress ? ` · ${p.formattedAddress}` : ''}`,
-      };
-    });
+  return new Promise<POI[]>((resolve, reject) => {
+    const handleResults = (
+      results: Array<{
+        place_id?: string;
+        name?: string;
+        vicinity?: string;
+        formatted_address?: string;
+        geometry?: { location?: { lat: () => number; lng: () => number } };
+        types?: string[];
+        rating?: number;
+        user_ratings_total?: number;
+      }> | null,
+      status: string
+    ) => {
+      if (status === 'ZERO_RESULTS') {
+        resolve([]);
+        return;
+      }
+      if (status !== 'OK' || !results) {
+        reject(new Error(`Google Maps Places 查詢失敗 (${status})，請確認金鑰已啟用 Places API 與計費功能。`));
+        return;
+      }
+
+      const pois: POI[] = results
+        .filter((p) => p.name && p.geometry?.location)
+        .map((p) => {
+          const lat = p.geometry!.location!.lat();
+          const lng = p.geometry!.location!.lng();
+          const mapped = mapGoogleTypesToCategories(p.types);
+          const addr = p.vicinity || p.formatted_address || '';
+          const ratingStr = p.rating
+            ? `⭐ ${p.rating.toFixed(1)} (${p.user_ratings_total ?? 0})`
+            : 'Google Maps 景點';
+
+          return {
+            id: `gmap-${p.place_id ?? p.name}`,
+            city,
+            district: addr.slice(0, 12) || 'Google Maps',
+            name: p.name!,
+            lat,
+            lng,
+            categories: mapped.categories,
+            suggestedMinutes: mapped.suggestedMinutes,
+            avgCostNtd: mapped.avgCostNtd,
+            openMinutes: 480,
+            closeMinutes: 1320,
+            closedDays: [],
+            isIndoor: mapped.isIndoor,
+            highlight: `[Google Maps] ${ratingStr}${addr ? ` · ${addr}` : ''}`,
+          };
+        });
+
+      resolve(pois);
+    };
+
+    if (trimmedQuery) {
+      service.textSearch(
+        {
+          query: trimmedQuery,
+          location,
+          radius: radiusMeters,
+        },
+        handleResults
+      );
+    } else {
+      service.nearbySearch(
+        {
+          location,
+          radius: radiusMeters,
+          type: 'tourist_attraction',
+        },
+        handleResults
+      );
+    }
+  });
 }
