@@ -380,15 +380,25 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
                       {poi.avgCostNtd > 0 ? `NT$ ${poi.avgCostNtd}` : '免費'}
                     </div>
                     {onToggleLock && (
-                      <button
-                        type="button"
-                        onClick={() => onToggleLock(poi.id)}
-                        className="mt-1 w-full py-1 px-2 rounded bg-blue-600 text-white font-medium hover:bg-blue-700"
-                      >
-                        {config.lockedPoiIds.includes(poi.id)
-                          ? '已設為必去（點擊取消）'
-                          : '＋ 加入必去行程'}
-                      </button>
+                      <div className="mt-1.5 flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => onToggleLock(poi.id)}
+                          className="flex-1 py-1 px-2 rounded bg-blue-600 text-white font-medium hover:bg-blue-700"
+                        >
+                          {config.lockedPoiIds.includes(poi.id)
+                            ? '已設必去'
+                            : '＋ 加入必去'}
+                        </button>
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${poi.lat},${poi.lng}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="py-1 px-2 rounded border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium"
+                        >
+                          Google 地圖
+                        </a>
+                      </div>
                     )}
                   </div>
                 </Popup>

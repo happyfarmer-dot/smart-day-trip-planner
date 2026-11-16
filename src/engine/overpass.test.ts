@@ -46,6 +46,6 @@ describe('Overpass Live Map Database Integration', () => {
     expect(pois.length).toBe(2);
     expect(pois[0].categories).toContain('food');
     expect(pois[1].categories).toContain('cafe');
-    expect(pois[0].highlight).toContain('OSM 地圖資料庫');
+    expect(pois[0].highlight).toContain('地圖資料庫');
   });
 });

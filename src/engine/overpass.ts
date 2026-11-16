@@ -24,11 +24,9 @@ export function buildOverpassQuery(
 ): string {
   let areaClause = '';
   if (geoFilter.mode === 'radius') {
-    // Cap radius at 12km for fast Overpass response
     const radiusMeters = Math.min(12000, Math.round(geoFilter.maxDistanceKm * 1000));
     areaClause = `(around:${radiusMeters},${geoFilter.center.lat.toFixed(5)},${geoFilter.center.lng.toFixed(5)})`;
   } else {
-    // Overpass poly expects "lat1 lon1 lat2 lon2 ..."
     const polyStr = geoFilter.coordinates
       .slice(0, -1)
       .map(([lng, lat]) => `${lat.toFixed(5)} ${lng.toFixed(5)}`)
@@ -42,13 +40,15 @@ export function buildOverpassQuery(
     : '["name"]';
 
   return `
-[out:json][timeout:12];
+[out:json][timeout:14];
 (
-  nwr["amenity"~"^(restaurant|cafe|fast_food|food_court|ice_cream|pub|bar|biergarten)$"]${nameFilter}${areaClause};
-  nwr["shop"~"^(bakery|coffee|tea|pastry|beverages)$"]${nameFilter}${areaClause};
-  nwr["tourism"~"^(attraction|museum|gallery|viewpoint)$"]${nameFilter}${areaClause};
+  nwr["tourism"~"^(attraction|museum|gallery|viewpoint|theme_park|zoo|aquarium|artwork|picnic_site)$"]${nameFilter}${areaClause};
+  nwr["historic"~"^(monument|memorial|castle|temple|ruins|heritage|archaeological_site|building)$"]${nameFilter}${areaClause};
+  nwr["leisure"~"^(park|garden|nature_reserve|water_park)$"]${nameFilter}${areaClause};
+  nwr["amenity"~"^(place_of_worship|arts_centre|theatre|marketplace|restaurant|cafe|fast_food|food_court|ice_cream)$"]${nameFilter}${areaClause};
+  nwr["shop"~"^(mall|department_store|bakery|coffee|tea|books)$"]${nameFilter}${areaClause};
 );
-out center 80;
+out center 220;
 `.trim();
 }
 
@@ -63,63 +63,75 @@ function mapOsmTagsToPoi(el: OverpassElement, city: 'taichung' | 'taipei'): POI 
   const amenity = tags.amenity ?? '';
   const shop = tags.shop ?? '';
   const tourism = tags.tourism ?? '';
+  const historic = tags.historic ?? '';
+  const leisure = tags.leisure ?? '';
 
   const categories: CategoryId[] = [];
-  let suggestedMinutes = 60;
-  let avgCostNtd = 220;
+  let suggestedMinutes = 65;
+  let avgCostNtd = 150;
   let isIndoor = true;
+  let typeLabel = '地圖景點';
 
-  if (amenity === 'cafe' || shop === 'coffee' || shop === 'tea') {
+  if (leisure === 'park' || leisure === 'garden' || leisure === 'nature_reserve' || tourism === 'viewpoint' || tourism === 'picnic_site') {
+    categories.push('nature');
+    isIndoor = false;
+    suggestedMinutes = 70;
+    avgCostNtd = 0;
+    typeLabel = tourism === 'viewpoint' ? '觀景／秘境' : '公園／自然綠地';
+  } else if (historic || amenity === 'place_of_worship') {
+    categories.push('heritage');
+    isIndoor = false;
+    suggestedMinutes = 60;
+    avgCostNtd = 0;
+    typeLabel = amenity === 'place_of_worship' ? '廟宇／文化古蹟' : '歷史古蹟';
+  } else if (tourism === 'theme_park' || tourism === 'zoo' || tourism === 'aquarium' || leisure === 'water_park') {
+    categories.push('family');
+    isIndoor = false;
+    suggestedMinutes = 110;
+    avgCostNtd = 300;
+    typeLabel = '親子樂園／園區';
+  } else if (tourism === 'museum' || tourism === 'gallery' || tourism === 'artwork' || amenity === 'arts_centre' || amenity === 'theatre') {
+    categories.push('art');
+    isIndoor = tourism !== 'artwork';
+    suggestedMinutes = 85;
+    avgCostNtd = 120;
+    typeLabel = '藝文展館／美學空間';
+  } else if (amenity === 'cafe' || shop === 'coffee' || shop === 'tea') {
     categories.push('cafe');
     if (amenity === 'restaurant') categories.push('food');
     suggestedMinutes = 60;
     avgCostNtd = 180;
+    typeLabel = '咖啡廳／茶館';
+  } else if (shop === 'mall' || shop === 'department_store' || shop === 'books' || amenity === 'marketplace') {
+    categories.push('shop');
+    isIndoor = amenity !== 'marketplace';
+    suggestedMinutes = 85;
+    avgCostNtd = 280;
+    typeLabel = amenity === 'marketplace' ? '市集／市場' : '商場／選物書店';
   } else if (
-    ['restaurant', 'fast_food', 'food_court', 'ice_cream', 'pub', 'bar', 'biergarten'].includes(amenity) ||
-    ['bakery', 'pastry', 'beverages'].includes(shop)
+    ['restaurant', 'fast_food', 'food_court', 'ice_cream'].includes(amenity) ||
+    shop === 'bakery'
   ) {
     categories.push('food');
-    suggestedMinutes = amenity === 'fast_food' || shop === 'beverages' ? 45 : 70;
-    avgCostNtd =
-      amenity === 'fast_food' || amenity === 'ice_cream' || shop === 'bakery' || shop === 'beverages'
-        ? 140
-        : 320;
-  } else if (tourism === 'museum' || tourism === 'gallery') {
-    categories.push('art');
-    suggestedMinutes = 90;
-    avgCostNtd = 150;
-  } else if (tourism === 'viewpoint') {
-    categories.push('nature');
-    suggestedMinutes = 50;
-    avgCostNtd = 0;
-    isIndoor = false;
+    suggestedMinutes = amenity === 'fast_food' ? 45 : 70;
+    avgCostNtd = amenity === 'fast_food' || amenity === 'ice_cream' || shop === 'bakery' ? 150 : 320;
+    typeLabel = tags.cuisine ? `料理：${tags.cuisine.replace(/;/g, '、')}` : '地圖餐廳／小吃';
   } else {
     categories.push('art');
+    if (tourism === 'attraction') isIndoor = false;
     suggestedMinutes = 60;
-    avgCostNtd = 100;
+    avgCostNtd = 50;
+    typeLabel = '熱門打卡景點';
   }
 
   const district =
     tags['addr:district'] ||
     tags['addr:suburb'] ||
     tags['addr:street'] ||
-    '地圖探索';
-
-  const typeLabel =
-    tags.cuisine
-      ? `料理類型：${tags.cuisine.replace(/;/g, '、')}`
-      : amenity === 'cafe'
-        ? '地圖咖啡廳'
-        : amenity === 'fast_food'
-          ? '地圖小吃／速食'
-          : amenity === 'restaurant'
-            ? '地圖餐廳'
-            : tourism
-              ? '地圖景點'
-              : '地圖美食店家';
+    '地圖景點';
 
   const streetInfo = tags['addr:street']
-    ? ` · 位於 ${tags['addr:street']}${tags['addr:housenumber'] ?? ''}`
+    ? ` · ${tags['addr:street']}${tags['addr:housenumber'] ?? ''}`
     : '';
 
   return {
@@ -132,11 +144,11 @@ function mapOsmTagsToPoi(el: OverpassElement, city: 'taichung' | 'taipei'): POI 
     categories,
     suggestedMinutes,
     avgCostNtd,
-    openMinutes: 480,  // 08:00 default when OSM hours unparsed
-    closeMinutes: 1320, // 22:00
+    openMinutes: 480,
+    closeMinutes: 1320,
     closedDays: [],
     isIndoor,
-    highlight: `[OSM 地圖資料庫] ${typeLabel}${streetInfo}`,
+    highlight: `[地圖資料庫] ${typeLabel}${streetInfo}`,
   };
 }
 
@@ -192,5 +204,5 @@ export async function fetchLiveMapPois(
     }
   }
 
-  throw lastError ?? new Error('無法連線至 OpenStreetMap Overpass 地圖資料庫');
+  throw lastError ?? new Error('無法連線至地圖資料庫');
 }
