@@ -25,6 +25,7 @@ interface MapWorkspaceProps {
   focusedPoiId: string | null;
   onUpdateConfig: (updater: (prev: PlannerConfig) => PlannerConfig) => void;
   onSelectPoi: (poiId: string) => void;
+  onToggleLock?: (poiId: string) => void;
 }
 
 function createCategoryIcon(color: string, inRange: boolean) {
@@ -226,6 +227,7 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
   focusedPoiId,
   onUpdateConfig,
   onSelectPoi,
+  onToggleLock,
 }) => {
   const cityPois = allPois.filter((p) => p.city === config.city);
   const stopOrderMap = new Map<string, number>();
@@ -377,6 +379,17 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
                       建議 {poi.suggestedMinutes} 分 ·{' '}
                       {poi.avgCostNtd > 0 ? `NT$ ${poi.avgCostNtd}` : '免費'}
                     </div>
+                    {onToggleLock && (
+                      <button
+                        type="button"
+                        onClick={() => onToggleLock(poi.id)}
+                        className="mt-1 w-full py-1 px-2 rounded bg-blue-600 text-white font-medium hover:bg-blue-700"
+                      >
+                        {config.lockedPoiIds.includes(poi.id)
+                          ? '已設為必去（點擊取消）'
+                          : '＋ 加入必去行程'}
+                      </button>
+                    )}
                   </div>
                 </Popup>
               </Marker>
