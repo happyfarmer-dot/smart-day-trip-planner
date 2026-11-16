@@ -105,9 +105,10 @@ function loadGoogleMapsSdk(apiKey: string): Promise<void> {
     const script = document.createElement('script');
     script.id = 'gmaps-places-sdk';
     script.async = true;
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=zh-TW`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=zh-TW&v=weekly`;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error('無法載入 Google Maps JS SDK，請檢查 API Key 或網域限制設定。'));
+    script.onerror = () =>
+      reject(new Error('無法載入 Google Maps JS SDK，請檢查 API Key 或網域限制設定。'));
     document.head.appendChild(script);
   });
   return sdkPromise;
@@ -146,40 +147,95 @@ export async function fetchGooglePlacesPois(
       ? Math.min(25000, Math.round(geoFilter.maxDistanceKm * 1000))
       : 8000;
 
-  // Use official Google Maps JS SDK PlacesService (works with standard browser API keys)
   await loadGoogleMapsSdk(trimmedKey);
 
   const g = window as unknown as {
     google?: {
       maps?: {
         LatLng: new (lat: number, lng: number) => unknown;
+        importLibrary?: (lib: string) => Promise<{
+          Place?: {
+            searchNearby?: (req: Record<string, unknown>) => Promise<{
+              places: Array<{
+                id: string;
+                displayName?: string;
+                formattedAddress?: string;
+                location?: { lat: () => number; lng: () => number };
+                types?: string[];
+                rating?: number;
+                userRatingCount?: number;
+              }>;
+            }>;
+            searchByText?: (req: Record<string, unknown>) => Promise<{
+              places: Array<{
+                id: string;
+                displayName?: string;
+                formattedAddress?: string;
+                location?: { lat: () => number; lng: () => number };
+                types?: string[];
+                rating?: number;
+                userRatingCount?: number;
+              }>;
+            }>;
+          };
+        }>;
         places?: {
+          Place?: {
+            searchNearby?: (req: Record<string, unknown>) => Promise<{
+              places: Array<{
+                id: string;
+                displayName?: string;
+                formattedAddress?: string;
+                location?: { lat: () => number; lng: () => number };
+                types?: string[];
+                rating?: number;
+                userRatingCount?: number;
+              }>;
+            }>;
+            searchByText?: (req: Record<string, unknown>) => Promise<{
+              places: Array<{
+                id: string;
+                displayName?: string;
+                formattedAddress?: string;
+                location?: { lat: () => number; lng: () => number };
+                types?: string[];
+                rating?: number;
+                userRatingCount?: number;
+              }>;
+            }>;
+          };
           PlacesService: new (attrContainer: HTMLElement) => {
             nearbySearch: (
               req: Record<string, unknown>,
-              cb: (results: Array<{
-                place_id?: string;
-                name?: string;
-                vicinity?: string;
-                formatted_address?: string;
-                geometry?: { location?: { lat: () => number; lng: () => number } };
-                types?: string[];
-                rating?: number;
-                user_ratings_total?: number;
-              }> | null, status: string) => void
+              cb: (
+                results: Array<{
+                  place_id?: string;
+                  name?: string;
+                  vicinity?: string;
+                  formatted_address?: string;
+                  geometry?: { location?: { lat: () => number; lng: () => number } };
+                  types?: string[];
+                  rating?: number;
+                  user_ratings_total?: number;
+                }> | null,
+                status: string
+              ) => void
             ) => void;
             textSearch: (
               req: Record<string, unknown>,
-              cb: (results: Array<{
-                place_id?: string;
-                name?: string;
-                vicinity?: string;
-                formatted_address?: string;
-                geometry?: { location?: { lat: () => number; lng: () => number } };
-                types?: string[];
-                rating?: number;
-                user_ratings_total?: number;
-              }> | null, status: string) => void
+              cb: (
+                results: Array<{
+                  place_id?: string;
+                  name?: string;
+                  vicinity?: string;
+                  formatted_address?: string;
+                  geometry?: { location?: { lat: () => number; lng: () => number } };
+                  types?: string[];
+                  rating?: number;
+                  user_ratings_total?: number;
+                }> | null,
+                status: string
+              ) => void
             ) => void;
           };
         };
@@ -187,14 +243,95 @@ export async function fetchGooglePlacesPois(
     };
   };
 
+  const trimmedQuery = keyword?.trim();
+
+  // 1. Try New Places JS API (Place.searchNearby / Place.searchByText) for "Places API (New)"
+  try {
+    const placesLib = g.google?.maps?.importLibrary
+      ? await g.google.maps.importLibrary('places')
+      : g.google?.maps?.places;
+
+    const PlaceClass = placesLib?.Place ?? g.google?.maps?.places?.Place;
+    if (PlaceClass?.searchNearby && PlaceClass?.searchByText) {
+      const fields = [
+        'id',
+        'displayName',
+        'formattedAddress',
+        'location',
+        'types',
+        'rating',
+        'userRatingCount',
+      ];
+
+      const response = trimmedQuery
+        ? await PlaceClass.searchByText({
+            textQuery: trimmedQuery,
+            fields,
+            locationBias: {
+              center: { lat: center.lat, lng: center.lng },
+              radius: radiusMeters,
+            },
+            maxResultCount: 20,
+            language: 'zh-TW',
+          })
+        : await PlaceClass.searchNearby({
+            fields,
+            locationRestriction: {
+              center: { lat: center.lat, lng: center.lng },
+              radius: radiusMeters,
+            },
+            includedPrimaryTypes: [
+              'tourist_attraction',
+              'museum',
+              'park',
+              'restaurant',
+              'cafe',
+              'shopping_mall',
+              'historical_landmark',
+            ],
+            maxResultCount: 20,
+            language: 'zh-TW',
+          });
+
+      return (response.places ?? [])
+        .filter((p) => p.displayName && p.location)
+        .map((p) => {
+          const lat = p.location!.lat();
+          const lng = p.location!.lng();
+          const mapped = mapGoogleTypesToCategories(p.types);
+          const ratingStr = p.rating
+            ? `⭐ ${p.rating.toFixed(1)} (${p.userRatingCount ?? 0})`
+            : 'Google Maps 景點';
+          return {
+            id: `gmap-${p.id}`,
+            city,
+            district: p.formattedAddress?.slice(0, 12) || 'Google Maps',
+            name: p.displayName!,
+            lat,
+            lng,
+            categories: mapped.categories,
+            suggestedMinutes: mapped.suggestedMinutes,
+            avgCostNtd: mapped.avgCostNtd,
+            openMinutes: 480,
+            closeMinutes: 1320,
+            closedDays: [],
+            isIndoor: mapped.isIndoor,
+            highlight: `[Google Maps] ${ratingStr}${p.formattedAddress ? ` · ${p.formattedAddress}` : ''}`,
+          };
+        });
+    }
+  } catch {
+    // Fall through to legacy PlacesService if Place.searchNearby is not permitted
+  }
+
+  // 2. Fallback to classic PlacesService
   if (!g.google?.maps?.places?.PlacesService) {
-    throw new Error('Google Maps Places 服務尚未啟用，請確認已啟用 Places API 與 Maps JavaScript API。');
+    throw new Error('Google Maps Places 服務尚未啟用，請確認已啟用 Places API (New) 與 Maps JavaScript API。');
   }
 
   const dummyDiv = document.createElement('div');
   const service = new g.google.maps.places.PlacesService(dummyDiv);
   const location = new g.google.maps.LatLng(center.lat, center.lng);
-  const trimmedQuery = keyword?.trim();
 
   return new Promise<POI[]>((resolve, reject) => {
     const handleResults = (
@@ -215,7 +352,7 @@ export async function fetchGooglePlacesPois(
         return;
       }
       if (status !== 'OK' || !results) {
-        reject(new Error(`Google Maps Places 查詢失敗 (${status})，請確認金鑰已啟用 Places API 與計費功能。`));
+        reject(new Error(`Google Maps Places 查詢失敗 (${status})，請確認金鑰網域限制與計費設定。`));
         return;
       }
 
@@ -252,23 +389,9 @@ export async function fetchGooglePlacesPois(
     };
 
     if (trimmedQuery) {
-      service.textSearch(
-        {
-          query: trimmedQuery,
-          location,
-          radius: radiusMeters,
-        },
-        handleResults
-      );
+      service.textSearch({ query: trimmedQuery, location, radius: radiusMeters }, handleResults);
     } else {
-      service.nearbySearch(
-        {
-          location,
-          radius: radiusMeters,
-          type: 'tourist_attraction',
-        },
-        handleResults
-      );
+      service.nearbySearch({ location, radius: radiusMeters, type: 'tourist_attraction' }, handleResults);
     }
   });
 }
