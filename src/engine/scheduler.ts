@@ -108,7 +108,7 @@ export function estimateTransitLeg(
   if (transportMode === 'transit') {
     const rideMins = Math.round((distanceKm / 18) * 60);
     const durationMinutes = Math.max(8, rideMins + 12);
-    const estimatedCostNtd = distanceKm <= 5 ? 20 : 35;
+    const estimatedCostNtd = distanceKm <= 5 ? 20 : distanceKm <= 25 ? 45 : 150;
     return {
       distanceKm,
       durationMinutes,
@@ -119,9 +119,9 @@ export function estimateTransitLeg(
   }
 
   if (transportMode === 'drive') {
-    const driveMins = Math.round((distanceKm / 32) * 60);
+    const driveMins = Math.round((distanceKm / 42) * 60);
     const durationMinutes = Math.max(5, driveMins + 4);
-    const estimatedCostNtd = Math.round(distanceKm * 6 + 30);
+    const estimatedCostNtd = Math.round(distanceKm * 5 + 30);
     return {
       distanceKm,
       durationMinutes,
@@ -132,9 +132,9 @@ export function estimateTransitLeg(
   }
 
   // Default: 'scooter' (騎車)
-  const rideMins = Math.round((distanceKm / 28) * 60);
+  const rideMins = Math.round((distanceKm / 30) * 60);
   const durationMinutes = Math.max(4, rideMins + 2);
-  const estimatedCostNtd = Math.round(Math.max(5, distanceKm * 4));
+  const estimatedCostNtd = Math.round(Math.max(5, distanceKm * 3.5));
   return {
     distanceKm,
     durationMinutes,
@@ -162,7 +162,10 @@ export function isPoiInGeoFilter(poi: POI, config: PlannerConfig): boolean {
     const poly = turf.polygon([coords]);
     return turf.booleanPointInPolygon(pt, poly);
   }
-  const centerPt = turf.point([config.geoFilter.center.lng, config.geoFilter.center.lat]);
+  const centerPt = turf.point([
+    config.geoFilter.center.lng,
+    config.geoFilter.center.lat,
+  ]);
   const distKm = turf.distance(centerPt, pt, { units: 'kilometers' });
   return distKm <= config.geoFilter.maxDistanceKm;
 }
@@ -181,21 +184,49 @@ export function filterEligiblePois(allPois: POI[], config: PlannerConfig): POI[]
   });
 }
 
+export function findNearestRainyBackup(
+  poi: POI,
+  allPois: POI[]
+): POI | undefined {
+  if (poi.isIndoor) return undefined;
+  if (poi.rainyBackupId) {
+    const explicit = allPois.find((p) => p.id === poi.rainyBackupId);
+    if (explicit) return explicit;
+  }
+  let best: POI | undefined;
+  let bestDist = 3.0; // within 3 km
+  for (const cand of allPois) {
+    if (cand.id === poi.id) continue;
+    if (!cand.isIndoor && !cand.categories.includes('cafe') && !cand.categories.includes('art')) {
+      continue;
+    }
+    const d = calcStraightDistanceKm(poi, cand);
+    if (d <= bestDist) {
+      bestDist = d;
+      best = cand;
+    }
+  }
+  return best;
+}
+
 /**
- * Nearest Neighbor + 2-opt route optimization
+ * Nearest Neighbor + 2-opt route optimization (preserving index 0 as seed)
  */
-export function optimizeRoute2Opt(pois: POI[], startCoord?: { lat: number; lng: number }): POI[] {
+export function optimizeRoute2Opt(
+  pois: POI[],
+  startCoord?: { lat: number; lng: number }
+): POI[] {
   if (pois.length <= 2) return [...pois];
 
   const remaining = [...pois];
   const ordered: POI[] = [];
 
   if (startCoord) {
-    remaining.sort(
-      (a, b) => calcStraightDistanceKm(startCoord, a) - calcStraightDistanceKm(startCoord, b)
-    );
+    // Keep index 0 if already chosen as expedition seed
+    ordered.push(remaining.shift()!);
+  } else {
+    ordered.push(remaining.shift()!);
   }
-  ordered.push(remaining.shift()!);
 
   while (remaining.length > 0) {
     const last = ordered[ordered.length - 1];
@@ -215,7 +246,7 @@ export function optimizeRoute2Opt(pois: POI[], startCoord?: { lat: number; lng: 
   let guard = 0;
   while (improved && guard++ < 50) {
     improved = false;
-    for (let i = 0; i < ordered.length - 2; i++) {
+    for (let i = 1; i < ordered.length - 2; i++) {
       for (let j = i + 2; j < ordered.length - 1; j++) {
         const d1 =
           calcStraightDistanceKm(ordered[i], ordered[i + 1]) +
@@ -257,11 +288,13 @@ function resolvePoiWithRainySwap(
 function buildStopsFromSequence(
   sequence: POI[],
   config: PlannerConfig,
-  allPois: POI[]
+  allPois: POI[],
+  outboundLeg?: TransitLeg
 ): ScheduledStop[] {
   const lockedSet = new Set(config.lockedPoiIds);
   const stops: ScheduledStop[] = [];
-  let currentMinutes = config.startMinutes;
+  let currentMinutes =
+    config.startMinutes + (outboundLeg ? outboundLeg.durationMinutes : 0);
 
   for (let i = 0; i < sequence.length; i++) {
     const resolved = resolvePoiWithRainySwap(sequence[i], config, allPois);
@@ -270,13 +303,18 @@ function buildStopsFromSequence(
     const transitFromPrev = prevStop
       ? estimateTransitLeg(prevStop.poi, poi, config.transportMode)
       : undefined;
-    const arrival = currentMinutes + (transitFromPrev ? transitFromPrev.durationMinutes : 0);
+    const arrival =
+      currentMinutes + (transitFromPrev ? transitFromPrev.durationMinutes : 0);
     const stay = getStayMinutes(poi, config.pace);
     const departure = arrival + stay;
 
     const isLunchWindow = arrival >= 675 && arrival <= 825;
     const isDinnerWindow = arrival >= 1035 && arrival <= 1185;
     const isFood = poi.categories.includes('food');
+
+    const autoRainyBackupPoi = !poi.isIndoor
+      ? findNearestRainyBackup(poi, allPois)
+      : undefined;
 
     stops.push({
       poi,
@@ -288,6 +326,7 @@ function buildStopsFromSequence(
       isMealSlot: isFood && (isLunchWindow || isDinnerWindow),
       activeRainyPlanB: resolved.activeRainyPlanB,
       originalOutdoorPoi: resolved.originalOutdoorPoi,
+      autoRainyBackupPoi,
     });
 
     currentMinutes = departure;
@@ -300,13 +339,14 @@ export function summarizePlan(
   stops: ScheduledStop[],
   eligibleCount: number,
   config: PlannerConfig,
-  baseWarnings: string[] = []
+  baseWarnings: string[] = [],
+  outboundLeg?: TransitLeg
 ): DayPlan {
   let totalTicketAndActivityCost = 0;
   let totalFoodCost = 0;
   let totalShopCost = 0;
-  let totalTransitCost = 0;
-  let totalDistanceKm = 0;
+  let totalTransitCost = outboundLeg ? outboundLeg.estimatedCostNtd : 0;
+  let totalDistanceKm = outboundLeg ? outboundLeg.distanceKm : 0;
 
   stops.forEach((s) => {
     if (s.transitFromPrev) {
@@ -337,6 +377,7 @@ export function summarizePlan(
 
   return {
     stops,
+    outboundLeg,
     eligibleCount,
     totalTicketAndActivityCost,
     totalFoodCost,
@@ -349,11 +390,55 @@ export function summarizePlan(
   };
 }
 
+/**
+ * Step A: Pick the expedition seed POI in outer ring (0.5R - 1.0R) when R > 15km
+ */
+function pickExpeditionSeedPoi(
+  eligible: POI[],
+  anchor: { lat: number; lng: number },
+  maxDistanceKm: number,
+  intraZoneKm: number,
+  startMinutes: number
+): POI | undefined {
+  if (maxDistanceKm <= 15) return undefined;
+
+  const minOuter = maxDistanceKm * 0.5;
+  const outerCandidates = eligible.filter((p) => {
+    const d = calcStraightDistanceKm(anchor, p);
+    return d >= minOuter && d <= maxDistanceKm;
+  });
+
+  if (outerCandidates.length === 0) return undefined;
+
+  const isLunchDeparture = startMinutes >= 660 && startMinutes <= 780;
+
+  const scored = outerCandidates.map((cand) => {
+    const neighborCount = eligible.filter(
+      (other) =>
+        other.id !== cand.id && calcStraightDistanceKm(cand, other) <= intraZoneKm
+    ).length;
+
+    let score = neighborCount * 4 + (cand.rating ?? 4.5) * 3;
+    const isCoreAttraction = cand.categories.some((c) =>
+      ['nature', 'art', 'heritage'].includes(c)
+    );
+    const isFood = cand.categories.includes('food');
+
+    if (isLunchDeparture && isFood) score += 15;
+    else if (!isLunchDeparture && isCoreAttraction) score += 12;
+
+    return { cand, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.cand;
+}
+
 export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan {
   const warnings: string[] = [];
   const eligible = filterEligiblePois(allPois, config);
 
-  const foodPoolInArea = allPois.filter(
+  const foodPoolAll = allPois.filter(
     (p) =>
       !config.excludedPoiIds.includes(p.id) &&
       !p.closedDays.includes(config.dayOfWeek) &&
@@ -376,16 +461,67 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     };
   }
 
-  const startCoord = getGeoCenter(config.geoFilter);
+  const anchor = getGeoCenter(config.geoFilter);
+  const isRadiusMode = config.geoFilter.mode === 'radius';
+  const maxR = config.geoFilter.mode === 'radius' ? config.geoFilter.maxDistanceKm : 15;
+  const intraR = config.geoFilter.mode === 'radius' ? config.geoFilter.intraZoneDistanceKm : 15;
+
   const lockedSet = new Set(config.lockedPoiIds);
   const usedIds = new Set<string>();
   const chosen: POI[] = [];
 
+  // Step A: Locked POIs first, or Expedition Seed in 0.5R - 1.0R outer ring
   const lockedPois = eligible.filter((p) => lockedSet.has(p.id));
-  lockedPois.forEach((p) => {
-    chosen.push(p);
-    usedIds.add(p.id);
-  });
+  if (lockedPois.length > 0) {
+    lockedPois.forEach((p) => {
+      chosen.push(p);
+      usedIds.add(p.id);
+    });
+  } else {
+    const seed = pickExpeditionSeedPoi(
+      eligible,
+      anchor,
+      maxR,
+      intraR,
+      config.startMinutes
+    );
+    if (seed) {
+      chosen.push(seed);
+      usedIds.add(seed.id);
+    }
+  }
+
+  // Step B: Intra-zone clustering around Stop 1 (within intraZoneDistanceKm)
+  const seedAnchor = chosen[0] ?? anchor;
+  let zoneEligible = eligible;
+  let zoneFoodPool = foodPoolAll;
+
+  if (isRadiusMode && maxR > 15 && chosen[0]) {
+    const strictEligible = eligible.filter(
+      (p) => calcStraightDistanceKm(seedAnchor, p) <= intraR
+    );
+    const strictFood = foodPoolAll.filter(
+      (p) => calcStraightDistanceKm(seedAnchor, p) <= intraR
+    );
+    zoneEligible =
+      strictEligible.length >= 2
+        ? strictEligible
+        : eligible.filter(
+            (p) => calcStraightDistanceKm(seedAnchor, p) <= intraR * 1.5
+          );
+    zoneFoodPool =
+      strictFood.length >= 1
+        ? strictFood
+        : foodPoolAll.filter(
+            (p) => calcStraightDistanceKm(seedAnchor, p) <= intraR * 1.5
+          );
+  }
+
+  // Calculate outbound leg if we have a seed & radius mode
+  const initialOutbound =
+    isRadiusMode && chosen[0]
+      ? estimateTransitLeg(anchor, chosen[0], config.transportMode)
+      : undefined;
 
   const totalHours = Math.max(1, (config.endMinutes - config.startMinutes) / 60);
   const maxStops =
@@ -395,8 +531,13 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
         ? Math.min(9, Math.max(3, Math.floor(totalHours / 1.3)))
         : Math.min(7, Math.max(3, Math.floor(totalHours / 1.7)));
 
-  let curTime = config.startMinutes;
-  let consecutiveOutdoor = 0;
+  let curTime =
+    config.startMinutes + (initialOutbound ? initialOutbound.durationMinutes : 0);
+  if (chosen[0]) {
+    curTime += getStayMinutes(chosen[0], config.pace);
+  }
+
+  let consecutiveOutdoor = chosen[0] && !chosen[0].isIndoor ? 1 : 0;
   let lunchAssigned = config.startMinutes > 810;
   let dinnerAssigned = config.startMinutes > 1170;
 
@@ -411,7 +552,7 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     const inDinnerWindow = !dinnerAssigned && curTime >= 1020 && curTime <= 1170;
     const needMeal = inLunchWindow || inDinnerWindow;
 
-    const pool = needMeal && foodPoolInArea.length > 0 ? foodPoolInArea : eligible;
+    const pool = needMeal && zoneFoodPool.length > 0 ? zoneFoodPool : zoneEligible;
     const candidates = pool.filter((p) => !usedIds.has(p.id));
     if (candidates.length === 0) break;
 
@@ -419,7 +560,7 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
       .map((cand) => {
         const dist = lastPoi
           ? calcStraightDistanceKm(lastPoi, cand)
-          : calcStraightDistanceKm(startCoord, cand);
+          : calcStraightDistanceKm(anchor, cand);
         const transit = lastPoi
           ? estimateTransitLeg(lastPoi, cand, config.transportMode)
           : { durationMinutes: 0, estimatedCostNtd: 0 };
@@ -482,19 +623,29 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     }
   }
 
-  let ordered = optimizeRoute2Opt(chosen, startCoord);
-  let stops = buildStopsFromSequence(ordered, config, allPois);
+  // Step C: 2-opt optimization keeping Stop 1 anchored
+  let ordered = optimizeRoute2Opt(chosen, anchor);
+  const finalOutbound =
+    isRadiusMode && ordered[0]
+      ? estimateTransitLeg(anchor, ordered[0], config.transportMode)
+      : undefined;
+
+  let stops = buildStopsFromSequence(ordered, config, allPois, finalOutbound);
 
   if (config.startMinutes <= 750 && config.endMinutes >= 780) {
     const hasLunchFood = stops.some(
-      (s) => s.poi.categories.includes('food') && s.arrivalMinutes >= 660 && s.arrivalMinutes <= 840
+      (s) =>
+        s.poi.categories.includes('food') &&
+        s.arrivalMinutes >= 660 &&
+        s.arrivalMinutes <= 840
     );
     if (!hasLunchFood) {
-      const foodIdx = ordered.findIndex((p) => p.categories.includes('food'));
+      const foodIdx = ordered.findIndex((p, idx) => idx > 0 && p.categories.includes('food'));
       if (foodIdx !== -1) {
-        let bestSlot = 0;
+        let bestSlot = 1;
         let bestDiff = Infinity;
         stops.forEach((s, idx) => {
+          if (idx === 0) return;
           const diff = Math.abs(s.arrivalMinutes - 720);
           if (diff < bestDiff) {
             bestDiff = diff;
@@ -503,12 +654,14 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
         });
         const [foodItem] = ordered.splice(foodIdx, 1);
         ordered.splice(bestSlot, 0, foodItem);
-        stops = buildStopsFromSequence(ordered, config, allPois);
+        stops = buildStopsFromSequence(ordered, config, allPois, finalOutbound);
       }
     }
   }
 
+  // Budget control
   const calcTotal = (st: ScheduledStop[]) =>
+    (finalOutbound?.estimatedCostNtd ?? 0) +
     st.reduce(
       (sum, s) => sum + s.poi.avgCostNtd + (s.transitFromPrev?.estimatedCostNtd ?? 0),
       0
@@ -518,14 +671,14 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
   while (calcTotal(stops) > config.budgetNtd && budgetGuard++ < 10) {
     const expensiveIdx = stops
       .map((s, idx) => ({ s, idx }))
-      .filter(({ s }) => !s.isLocked && s.poi.avgCostNtd > 0)
+      .filter(({ s, idx }) => idx > 0 && !s.isLocked && s.poi.avgCostNtd > 0)
       .sort((a, b) => b.s.poi.avgCostNtd - a.s.poi.avgCostNtd)[0]?.idx;
 
     if (expensiveIdx === undefined) break;
 
     const target = stops[expensiveIdx].poi;
     const usedSet = new Set(stops.map((s) => s.poi.id));
-    const cheaper = eligible
+    const cheaper = zoneEligible
       .filter(
         (p) =>
           !usedSet.has(p.id) &&
@@ -536,15 +689,12 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
 
     if (!cheaper) break;
     ordered[expensiveIdx] = cheaper;
-    stops = buildStopsFromSequence(ordered, config, allPois);
+    stops = buildStopsFromSequence(ordered, config, allPois, finalOutbound);
   }
 
-  return summarizePlan(stops, eligible.length, config, warnings);
+  return summarizePlan(stops, eligible.length, config, warnings, finalOutbound);
 }
 
-/**
- * Recalculate timing, transit legs, and budget after transport mode change or manual stop reordering
- */
 export function recalculatePlanStops(
   currentStops: ScheduledStop[],
   eligibleCount: number,
@@ -552,12 +702,17 @@ export function recalculatePlanStops(
   allPois: POI[]
 ): DayPlan {
   const seq = currentStops.map((s) => s.originalOutdoorPoi ?? s.poi);
-  const rebuilt = buildStopsFromSequence(seq, config, allPois);
+  const anchor = getGeoCenter(config.geoFilter);
+  const outboundLeg =
+    config.geoFilter.mode === 'radius' && seq[0]
+      ? estimateTransitLeg(anchor, seq[0], config.transportMode)
+      : undefined;
+  const rebuilt = buildStopsFromSequence(seq, config, allPois, outboundLeg);
   const baseWarnings: string[] = [];
   if (!config.selectedCategories.includes('food')) {
     baseWarnings.push('您未勾選「在地美食／小吃」，系統已於午／晚餐時段自動為您保留或安插用餐空檔。');
   }
-  return summarizePlan(rebuilt, eligibleCount, config, baseWarnings);
+  return summarizePlan(rebuilt, eligibleCount, config, baseWarnings, outboundLeg);
 }
 
 export function moveStopInPlan(

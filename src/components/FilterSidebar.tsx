@@ -35,6 +35,7 @@ interface FilterSidebarProps {
   onSearchSubmit: (keyword?: string) => void;
   onFocusPoi: (poiId: string) => void;
   onToggleLock: (poiId: string) => void;
+  onCityPreset: (city: 'taichung' | 'taipei') => void;
   onChange: (updater: (prev: PlannerConfig) => PlannerConfig) => void;
   onTransportChange: (mode: TransportMode) => void;
   onGenerate: () => void;
@@ -73,6 +74,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   onSearchSubmit,
   onFocusPoi,
   onToggleLock,
+  onCityPreset,
   onChange,
   onTransportChange,
   onGenerate,
@@ -91,7 +93,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* 1. 空間圈選與距離模式 + 關鍵字搜尋 */}
+      {/* 1. 空間圈選與雙層距離控制 + 關鍵字搜尋 */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
@@ -111,52 +113,26 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           <button
             type="button"
             data-testid="city-taichung"
-            onClick={() =>
-              onChange((prev) => ({
-                ...prev,
-                city: 'taichung',
-                geoFilter: {
-                  mode: 'radius',
-                  center: { lat: 24.155, lng: 120.655 },
-                  maxDistanceKm: 8,
-                },
-                lockedPoiIds: [],
-                excludedPoiIds: [],
-                rainySwaps: {},
-              }))
-            }
-            className={`py-1.5 rounded-md font-medium transition ${
+            onClick={() => onCityPreset('taichung')}
+            className={`py-1.5 px-1 rounded-md font-medium transition text-[11px] ${
               config.city === 'taichung'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            跳轉台中
+            台中（西屯／北區／海線）
           </button>
           <button
             type="button"
             data-testid="city-taipei"
-            onClick={() =>
-              onChange((prev) => ({
-                ...prev,
-                city: 'taipei',
-                geoFilter: {
-                  mode: 'radius',
-                  center: { lat: 25.045, lng: 121.532 },
-                  maxDistanceKm: 8,
-                },
-                lockedPoiIds: [],
-                excludedPoiIds: [],
-                rainySwaps: {},
-              }))
-            }
-            className={`py-1.5 rounded-md font-medium transition ${
+            onClick={() => onCityPreset('taipei')}
+            className={`py-1.5 px-1 rounded-md font-medium transition text-[11px] ${
               config.city === 'taipei'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            跳轉台北
+            台北（市區／北投／淡水）
           </button>
         </div>
 
@@ -177,7 +153,11 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                   maxDistanceKm:
                     prev.geoFilter.mode === 'radius'
                       ? prev.geoFilter.maxDistanceKm
-                      : 8,
+                      : 30,
+                  intraZoneDistanceKm:
+                    prev.geoFilter.mode === 'radius'
+                      ? prev.geoFilter.intraZoneDistanceKm
+                      : 10,
                 },
               }))
             }
@@ -187,7 +167,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                 : 'border-slate-200 text-slate-600 hover:bg-slate-50'
             }`}
           >
-            錨點＋距離半徑
+            錨點＋雙層距離
           </button>
           <button
             type="button"
@@ -224,32 +204,104 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         </div>
 
         {config.geoFilter.mode === 'radius' ? (
-          <div className="space-y-1.5 pt-1">
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-600">單趟最遠移動距離</span>
-              <span className="font-semibold text-blue-700 tabular-nums">
-                {config.geoFilter.maxDistanceKm} km
-              </span>
+          <div className="space-y-3 pt-1">
+            {/* 滑桿 1：第一踩點最遠距離 (5 - 120 km) */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-600 font-medium">第一踩點最遠距離</span>
+                <span
+                  data-testid="expedition-radius-label"
+                  className="font-bold text-blue-700 tabular-nums"
+                >
+                  {config.geoFilter.maxDistanceKm} km
+                </span>
+              </div>
+              <input
+                data-testid="radius-slider"
+                type="range"
+                min={5}
+                max={120}
+                step={5}
+                value={config.geoFilter.maxDistanceKm}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  onChange((prev) => ({
+                    ...prev,
+                    geoFilter:
+                      prev.geoFilter.mode === 'radius'
+                        ? { ...prev.geoFilter, maxDistanceKm: val }
+                        : prev.geoFilter,
+                  }));
+                }}
+                className="w-full accent-blue-600"
+              />
+              {/* 快速模式標籤 */}
+              <div className="grid grid-cols-3 gap-1 text-[10px]">
+                {[
+                  { label: '就近市區 ≤15km', val: 15, active: config.geoFilter.maxDistanceKm <= 15 },
+                  {
+                    label: '郊區半日 20~50km',
+                    val: 35,
+                    active: config.geoFilter.maxDistanceKm > 15 && config.geoFilter.maxDistanceKm <= 50,
+                  },
+                  { label: '跨縣市 50~120km', val: 60, active: config.geoFilter.maxDistanceKm > 50 },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() =>
+                      onChange((prev) => ({
+                        ...prev,
+                        geoFilter:
+                          prev.geoFilter.mode === 'radius'
+                            ? { ...prev.geoFilter, maxDistanceKm: preset.val }
+                            : prev.geoFilter,
+                      }))
+                    }
+                    className={`py-1 px-1 rounded border text-center transition ${
+                      preset.active
+                        ? 'border-blue-400 bg-blue-50 text-blue-700 font-semibold'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <input
-              data-testid="radius-slider"
-              type="range"
-              min={1}
-              max={50}
-              step={1}
-              value={config.geoFilter.maxDistanceKm}
-              onChange={(e) => {
-                const val = Number(e.target.value);
-                onChange((prev) => ({
-                  ...prev,
-                  geoFilter:
-                    prev.geoFilter.mode === 'radius'
-                      ? { ...prev.geoFilter, maxDistanceKm: val }
-                      : prev.geoFilter,
-                }));
-              }}
-              className="w-full accent-blue-600"
-            />
+
+            {/* 滑桿 2：景點間單趟移動上限 (3 - 30 km) */}
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-600">景點間單趟移動上限</span>
+                <span
+                  data-testid="intrazone-radius-label"
+                  className="font-semibold text-slate-800 tabular-nums"
+                >
+                  {config.geoFilter.intraZoneDistanceKm} km
+                </span>
+              </div>
+              <input
+                data-testid="intrazone-slider"
+                type="range"
+                min={3}
+                max={30}
+                step={1}
+                value={config.geoFilter.intraZoneDistanceKm}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  onChange((prev) => ({
+                    ...prev,
+                    geoFilter:
+                      prev.geoFilter.mode === 'radius'
+                        ? { ...prev.geoFilter, intraZoneDistanceKm: val }
+                        : prev.geoFilter,
+                  }));
+                }}
+                className="w-full accent-slate-700"
+              />
+            </div>
+
             <p className="text-[11px] text-slate-500">
               <span className="hidden md:inline">
                 提示：點擊右側地圖任一處即可移動出發錨點並自動載入周邊景點。
@@ -261,7 +313,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           </div>
         ) : (
           <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2">
-            已啟用多邊形模式：可使用地圖右上角繪圖工具繪製多邊形／矩形，或拖曳頂點微調範圍。
+            已啟用多邊形模式：系統直接以您繪製的多邊形邊界作為核心遊玩區域（可使用地圖右上角工具微調頂點）。
           </p>
         )}
 

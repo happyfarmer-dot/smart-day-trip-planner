@@ -30,6 +30,8 @@ export interface POI {
   closeMinutes: number;         // 每日營業結束
   closedDays: number[];         // 公休日（0=週日 .. 6=週六）
   isIndoor: boolean;            // 室內／戶外屬性
+  rating?: number;              // Google Places 星等
+  reviewCount?: number;         // Google Places 評論數
   highlight: string;            // 一句話亮點
   rainyBackupId?: string;       // 推薦的鄰近室內雨天備案 POI ID
 }
@@ -42,7 +44,8 @@ export type GeoFilter =
   | {
       mode: 'radius';
       center: { lat: number; lng: number };
-      maxDistanceKm: number;
+      maxDistanceKm: number;        // 第一踩點最遠距離 (5 - 120 km)
+      intraZoneDistanceKm: number;  // 景點間單趟移動上限 (3 - 30 km)
     };
 
 export type PaceMode = 'relaxed' | 'balanced' | 'packed';
@@ -85,10 +88,12 @@ export interface ScheduledStop {
   isPlaceholderMeal?: boolean;
   activeRainyPlanB?: boolean;
   originalOutdoorPoi?: POI;
+  autoRainyBackupPoi?: POI;     // 自動配對 3 km 內最近室內備案
 }
 
 export interface DayPlan {
   stops: ScheduledStop[];
+  outboundLeg?: TransitLeg;     // 出發點 -> 第 1 站去程遠征段
   eligibleCount: number;
   totalTicketAndActivityCost: number; // 門票體驗
   totalFoodCost: number;              // 餐飲咖啡

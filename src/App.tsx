@@ -12,6 +12,7 @@ import {
 import { fetchLiveMapPois } from './engine/overpass';
 import {
   filterEligiblePois,
+  findNearestRainyBackup,
   generateDayPlan,
   moveStopInPlan,
   recalculatePlanStops,
@@ -24,7 +25,8 @@ const INITIAL_CONFIG: PlannerConfig = {
   geoFilter: {
     mode: 'radius',
     center: { lat: 24.155, lng: 120.655 },
-    maxDistanceKm: 8,
+    maxDistanceKm: 30,
+    intraZoneDistanceKm: 10,
   },
   selectedCategories: ['food', 'art', 'cafe', 'shop'],
   startMinutes: 600, // 10:00
@@ -59,6 +61,7 @@ export function App() {
   const [isFetchingMap, setIsFetchingMap] = useState(false);
   const [mapDbStatus, setMapDbStatus] = useState<string | null>(null);
   const [focusedPoiId, setFocusedPoiId] = useState<string | null>(null);
+  const [flyTrigger, setFlyTrigger] = useState(0);
   const [mobileTarget, setMobileTarget] = useState<'map' | 'itinerary'>('map');
 
   const [gmapsKey, setGmapsKey] = useState(() => getSavedGoogleMapsApiKey());
@@ -197,17 +200,42 @@ export function App() {
     setPlan((prev) => moveStopInPlan(prev, index, direction, config, allPois));
   };
 
+  const handleCityPreset = (city: 'taichung' | 'taipei') => {
+    const center =
+      city === 'taichung'
+        ? { lat: 24.155, lng: 120.655 }
+        : { lat: 25.045, lng: 121.532 };
+    const nextConfig: PlannerConfig = {
+      ...config,
+      city,
+      geoFilter: {
+        mode: 'radius',
+        center,
+        maxDistanceKm:
+          config.geoFilter.mode === 'radius'
+            ? config.geoFilter.maxDistanceKm
+            : 30,
+        intraZoneDistanceKm:
+          config.geoFilter.mode === 'radius'
+            ? config.geoFilter.intraZoneDistanceKm
+            : 10,
+      },
+      lockedPoiIds: [],
+      excludedPoiIds: [],
+      rainySwaps: {},
+    };
+    setConfig(nextConfig);
+    setFlyTrigger((n) => n + 1);
+    setPlan(generateDayPlan(allPois, nextConfig));
+  };
+
   const handleToggleRainyPlanB = (originalPoi: POI) => {
     const nextSwaps = { ...config.rainySwaps };
     if (nextSwaps[originalPoi.id]) {
       delete nextSwaps[originalPoi.id];
-    } else if (originalPoi.rainyBackupId) {
-      nextSwaps[originalPoi.id] = originalPoi.rainyBackupId;
     } else {
-      const indoor = allPois.find(
-        (p) => p.isIndoor && p.id !== originalPoi.id
-      );
-      if (indoor) nextSwaps[originalPoi.id] = indoor.id;
+      const backup = findNearestRainyBackup(originalPoi, allPois);
+      if (backup) nextSwaps[originalPoi.id] = backup.id;
     }
     const nextConfig: PlannerConfig = {
       ...config,
@@ -315,6 +343,7 @@ export function App() {
             onSearchSubmit={(kw) => handleFetchLiveMapDb(kw)}
             onFocusPoi={(id) => setFocusedPoiId(id)}
             onToggleLock={handleToggleLock}
+            onCityPreset={handleCityPreset}
             onChange={setConfig}
             onTransportChange={handleTransportChange}
             onGenerate={handleGenerate}
@@ -328,6 +357,7 @@ export function App() {
             allPois={allPois}
             plan={plan}
             focusedPoiId={focusedPoiId}
+            flyTrigger={flyTrigger}
             onUpdateConfig={setConfig}
             onSelectPoi={(id) => setFocusedPoiId(id)}
             onToggleLock={handleToggleLock}

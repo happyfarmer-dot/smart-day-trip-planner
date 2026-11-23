@@ -22,6 +22,7 @@ interface MapWorkspaceProps {
   allPois: POI[];
   plan: DayPlan;
   focusedPoiId: string | null;
+  flyTrigger: number;
   onUpdateConfig: (updater: (prev: PlannerConfig) => PlannerConfig) => void;
   onSelectPoi: (poiId: string) => void;
   onToggleLock?: (poiId: string) => void;
@@ -84,23 +85,26 @@ const MapController: React.FC<{
   config: PlannerConfig;
   allPois: POI[];
   focusedPoiId: string | null;
+  flyTrigger: number;
   onUpdateConfig: (updater: (prev: PlannerConfig) => PlannerConfig) => void;
-}> = ({ config, allPois, focusedPoiId, onUpdateConfig }) => {
+}> = ({ config, allPois, focusedPoiId, flyTrigger, onUpdateConfig }) => {
   const map = useMap();
-  const prevCityRef = useRef(config.city);
+  const prevTriggerRef = useRef(flyTrigger);
   const drawnLayerRef = useRef<L.FeatureGroup | null>(null);
   const drawControlRef = useRef<L.Control | null>(null);
 
   useEffect(() => {
-    if (prevCityRef.current !== config.city) {
-      prevCityRef.current = config.city;
+    if (prevTriggerRef.current !== flyTrigger) {
+      prevTriggerRef.current = flyTrigger;
       const target =
-        config.city === 'taichung'
-          ? ([24.155, 120.655] as [number, number])
-          : ([25.045, 121.532] as [number, number]);
-      map.flyTo(target, 12, { duration: 0.6 });
+        config.geoFilter.mode === 'radius'
+          ? ([config.geoFilter.center.lat, config.geoFilter.center.lng] as [number, number])
+          : config.city === 'taichung'
+            ? ([24.155, 120.655] as [number, number])
+            : ([25.045, 121.532] as [number, number]);
+      map.flyTo(target, 11, { duration: 0.6 });
     }
-  }, [config.city, map]);
+  }, [flyTrigger, config.city, config.geoFilter, map]);
 
   useEffect(() => {
     if (!focusedPoiId) return;
@@ -232,6 +236,7 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
   allPois,
   plan,
   focusedPoiId,
+  flyTrigger,
   onUpdateConfig,
   onSelectPoi,
   onToggleLock,
@@ -308,6 +313,7 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
             config={config}
             allPois={allPois}
             focusedPoiId={focusedPoiId}
+            flyTrigger={flyTrigger}
             onUpdateConfig={onUpdateConfig}
           />
 

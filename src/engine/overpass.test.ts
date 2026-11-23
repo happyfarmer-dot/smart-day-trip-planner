@@ -8,6 +8,7 @@ describe('Overpass Live Map Database Integration', () => {
         mode: 'radius',
         center: { lat: 24.155, lng: 120.655 },
         maxDistanceKm: 5,
+        intraZoneDistanceKm: 5,
       },
       '牛肉麵'
     );
@@ -46,6 +47,6 @@ describe('Overpass Live Map Database Integration', () => {
     expect(pois.length).toBe(2);
     expect(pois[0].categories).toContain('food');
     expect(pois[1].categories).toContain('cafe');
-    expect(pois[0].highlight).toContain('地圖資料庫');
+    expect(pois[0].highlight).toContain('料理：beef_noodle');
   });
 });

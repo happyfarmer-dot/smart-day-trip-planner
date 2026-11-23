@@ -24,7 +24,7 @@ export function buildOverpassQuery(
 ): string {
   let areaClause = '';
   if (geoFilter.mode === 'radius') {
-    const radiusMeters = Math.min(12000, Math.round(geoFilter.maxDistanceKm * 1000));
+    const radiusMeters = Math.min(45000, Math.round(geoFilter.maxDistanceKm * 1000));
     areaClause = `(around:${radiusMeters},${geoFilter.center.lat.toFixed(5)},${geoFilter.center.lng.toFixed(5)})`;
   } else {
     const polyStr = geoFilter.coordinates
@@ -148,7 +148,7 @@ function mapOsmTagsToPoi(el: OverpassElement, _city: 'taichung' | 'taipei'): POI
     closeMinutes: 1320,
     closedDays: [],
     isIndoor,
-    highlight: `[地圖資料庫] ${typeLabel}${streetInfo}`,
+    highlight: `${typeLabel}${streetInfo}`,
   };
 }
 

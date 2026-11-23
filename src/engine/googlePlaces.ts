@@ -1,3 +1,4 @@
+import * as turf from '@turf/turf';
 import type { CategoryId, GeoFilter, POI } from '../types/planner';
 
 const GMAPS_KEY_STORAGE = 'smart_trip_gmaps_api_key';
@@ -20,6 +21,33 @@ export function saveGoogleMapsApiKey(key: string): void {
   }
 }
 
+/**
+ * 精準從台灣地址中萃取出「區 / 鄉 / 鎮 / 市」名稱，避免郵遞區號殘留或斷字
+ */
+export function extractTaiwanDistrict(address?: string): string {
+  if (!address) return '精選地點';
+  // Match e.g. 407台灣臺中市西屯區... -> 西屯區, 505彰化縣鹿港鎮... -> 鹿港鎮
+  const withCity = address.match(
+    /(?:臺|台)?[\u4e00-\u9fa5]{1,2}[市縣]([\u4e00-\u9fa5]{1,3}?[區鄉鎮市])/
+  );
+  if (withCity?.[1]) return withCity[1];
+
+  const standalone = address.match(/([\u4e00-\u9fa5]{1,3}?[區鄉鎮])/);
+  if (standalone?.[1]) return standalone[1];
+
+  const cityOnly = address.match(/((?:臺|台)?[\u4e00-\u9fa5]{1,2}[市縣])/);
+  if (cityOnly?.[1]) return cityOnly[1];
+
+  return '精選地點';
+}
+
+function isLikelyTaiwanLand(lat: number, lng: number): boolean {
+  if (lat < 21.88 || lat > 25.32 || lng < 120.02 || lng > 122.02) return false;
+  // Exclude western Taiwan Strait open water
+  if (lng < 120.14 && lat > 23.4 && lat < 25.1) return false;
+  return true;
+}
+
 function mapGoogleTypesToCategories(types: string[] = []): {
   categories: CategoryId[];
   isIndoor: boolean;
@@ -32,25 +60,45 @@ function mapGoogleTypesToCategories(types: string[] = []): {
   let suggestedMinutes = 75;
   let avgCostNtd = 150;
 
-  if (t.has('park') || t.has('national_park') || t.has('hiking_area') || t.has('natural_feature')) {
+  if (
+    t.has('park') ||
+    t.has('national_park') ||
+    t.has('hiking_area') ||
+    t.has('natural_feature')
+  ) {
     categories.push('nature');
     isIndoor = false;
     suggestedMinutes = 80;
     avgCostNtd = 0;
   }
-  if (t.has('museum') || t.has('art_gallery') || t.has('performing_arts_theater')) {
+  if (
+    t.has('museum') ||
+    t.has('art_gallery') ||
+    t.has('performing_arts_theater')
+  ) {
     categories.push('art');
     isIndoor = true;
     suggestedMinutes = 90;
     avgCostNtd = 150;
   }
-  if (t.has('historical_landmark') || t.has('cultural_landmark') || t.has('hindu_temple') || t.has('buddhist_temple') || t.has('place_of_worship')) {
+  if (
+    t.has('historical_landmark') ||
+    t.has('cultural_landmark') ||
+    t.has('hindu_temple') ||
+    t.has('buddhist_temple') ||
+    t.has('place_of_worship')
+  ) {
     categories.push('heritage');
     isIndoor = false;
     suggestedMinutes = 70;
     avgCostNtd = 0;
   }
-  if (t.has('amusement_park') || t.has('zoo') || t.has('aquarium') || t.has('playground')) {
+  if (
+    t.has('amusement_park') ||
+    t.has('zoo') ||
+    t.has('aquarium') ||
+    t.has('playground')
+  ) {
     categories.push('family');
     isIndoor = false;
     suggestedMinutes = 110;
@@ -68,7 +116,12 @@ function mapGoogleTypesToCategories(types: string[] = []): {
     suggestedMinutes = 60;
     avgCostNtd = 200;
   }
-  if (t.has('restaurant') || t.has('food') || t.has('bakery') || t.has('night_market')) {
+  if (
+    t.has('restaurant') ||
+    t.has('food') ||
+    t.has('bakery') ||
+    t.has('night_market')
+  ) {
     categories.push('food');
     isIndoor = true;
     suggestedMinutes = 70;
@@ -114,6 +167,26 @@ function loadGoogleMapsSdk(apiKey: string): Promise<void> {
   return sdkPromise;
 }
 
+export function buildRingSampleCenters(
+  center: { lat: number; lng: number },
+  maxDistanceKm: number
+): Array<{ lat: number; lng: number }> {
+  if (maxDistanceKm <= 25) return [center];
+  const ringRadius = maxDistanceKm * 0.75;
+  const bearings = [0, 60, 120, 180, 240, 300];
+  const origin = turf.point([center.lng, center.lat]);
+
+  const sampled: Array<{ lat: number; lng: number }> = [];
+  for (const b of bearings) {
+    const dest = turf.destination(origin, ringRadius, b, { units: 'kilometers' });
+    const [lng, lat] = dest.geometry.coordinates;
+    if (isLikelyTaiwanLand(lat, lng)) {
+      sampled.push({ lat, lng });
+    }
+  }
+  return sampled.length > 0 ? sampled : [center];
+}
+
 export async function fetchGooglePlacesPois(
   apiKey: string,
   geoFilter: GeoFilter,
@@ -123,7 +196,7 @@ export async function fetchGooglePlacesPois(
   const trimmedKey = apiKey.trim();
   if (!trimmedKey.startsWith('AIza')) {
     throw new Error(
-      '金鑰格式不正確：請填入 Google Cloud Console「憑證」中以 AIza 開頭的 API 金鑰（並非 OAuth 用戶端 ID）。'
+      '金鑰格式不正確：請填入 Google Cloud Console「憑證」中以 AIza 開頭的 API 金鑰。'
     );
   }
 
@@ -142,10 +215,16 @@ export async function fetchGooglePlacesPois(
           };
         })();
 
-  const radiusMeters =
-    geoFilter.mode === 'radius'
-      ? Math.min(25000, Math.round(geoFilter.maxDistanceKm * 1000))
-      : 8000;
+  const maxDistKm = geoFilter.mode === 'radius' ? geoFilter.maxDistanceKm : 8;
+  const intraKm = geoFilter.mode === 'radius' ? geoFilter.intraZoneDistanceKm : 8;
+  const sampleCenters =
+    geoFilter.mode === 'radius' && !keyword?.trim()
+      ? buildRingSampleCenters(center, maxDistKm)
+      : [center];
+  const sampleRadiusMeters =
+    maxDistKm > 25 && !keyword?.trim()
+      ? Math.min(20000, Math.max(10000, Math.round(intraKm * 1200)))
+      : Math.min(25000, Math.round(maxDistKm * 1000));
 
   await loadGoogleMapsSdk(trimmedKey);
 
@@ -245,7 +324,7 @@ export async function fetchGooglePlacesPois(
 
   const trimmedQuery = keyword?.trim();
 
-  // 1. Try New Places JS API (Place.searchNearby / Place.searchByText) for "Places API (New)"
+  // 1. Try New Places JS API (Place.searchNearby / Place.searchByText)
   try {
     const placesLib = g.google?.maps?.importLibrary
       ? await g.google.maps.importLibrary('places')
@@ -263,71 +342,96 @@ export async function fetchGooglePlacesPois(
         'userRatingCount',
       ];
 
-      const response = trimmedQuery
-        ? await PlaceClass.searchByText({
-            textQuery: trimmedQuery,
-            fields,
-            locationBias: {
-              center: { lat: center.lat, lng: center.lng },
-              radius: radiusMeters,
-            },
-            maxResultCount: 20,
-            language: 'zh-TW',
-          })
-        : await PlaceClass.searchNearby({
-            fields,
-            locationRestriction: {
-              center: { lat: center.lat, lng: center.lng },
-              radius: radiusMeters,
-            },
-            includedPrimaryTypes: [
-              'tourist_attraction',
-              'museum',
-              'park',
-              'restaurant',
-              'cafe',
-              'shopping_mall',
-              'historical_landmark',
-            ],
-            maxResultCount: 20,
-            language: 'zh-TW',
-          });
+      const allRaw: Array<{
+        id: string;
+        displayName?: string;
+        formattedAddress?: string;
+        location?: { lat: () => number; lng: () => number };
+        types?: string[];
+        rating?: number;
+        userRatingCount?: number;
+      }> = [];
 
-      return (response.places ?? [])
-        .filter((p) => p.displayName && p.location)
-        .map((p) => {
-          const lat = p.location!.lat();
-          const lng = p.location!.lng();
-          const mapped = mapGoogleTypesToCategories(p.types);
-          const ratingStr = p.rating
-            ? `⭐ ${p.rating.toFixed(1)} (${p.userRatingCount ?? 0})`
-            : 'Google Maps 景點';
-          return {
-            id: `gmap-${p.id}`,
-            placeId: p.id,
-            city: 'live' as const,
-            district: p.formattedAddress?.slice(0, 12) || 'Google Maps',
-            name: p.displayName!,
-            lat,
-            lng,
-            categories: mapped.categories,
-            suggestedMinutes: mapped.suggestedMinutes,
-            avgCostNtd: mapped.avgCostNtd,
-            openMinutes: 480,
-            closeMinutes: 1320,
-            closedDays: [],
-            isIndoor: mapped.isIndoor,
-            highlight: `[Google Maps] ${ratingStr}${p.formattedAddress ? ` · ${p.formattedAddress}` : ''}`,
-          };
+      if (trimmedQuery) {
+        const res = await PlaceClass.searchByText({
+          textQuery: trimmedQuery,
+          fields,
+          locationBias: {
+            center: { lat: center.lat, lng: center.lng },
+            radius: Math.min(50000, Math.round(maxDistKm * 1000)),
+          },
+          maxResultCount: 20,
+          language: 'zh-TW',
         });
+        allRaw.push(...(res.places ?? []));
+      } else {
+        const responses = await Promise.allSettled(
+          sampleCenters.map((sc) =>
+            PlaceClass.searchNearby!({
+              fields,
+              locationRestriction: {
+                center: { lat: sc.lat, lng: sc.lng },
+                radius: sampleRadiusMeters,
+              },
+              includedPrimaryTypes: [
+                'tourist_attraction',
+                'museum',
+                'park',
+                'restaurant',
+                'cafe',
+                'shopping_mall',
+                'historical_landmark',
+              ],
+              maxResultCount: 15,
+              language: 'zh-TW',
+            })
+          )
+        );
+        for (const r of responses) {
+          if (r.status === 'fulfilled') {
+            allRaw.push(...(r.value.places ?? []));
+          }
+        }
+      }
+
+      const seen = new Set<string>();
+      const pois: POI[] = [];
+      for (const p of allRaw) {
+        if (!p.displayName || !p.location || seen.has(p.id)) continue;
+        seen.add(p.id);
+        const mapped = mapGoogleTypesToCategories(p.types);
+        const cleanAddress = p.formattedAddress?.replace(/^\d{3,6}\s*(?:台灣|臺灣)?/, '').trim();
+        pois.push({
+          id: `gmap-${p.id}`,
+          placeId: p.id,
+          city: 'live',
+          district: extractTaiwanDistrict(p.formattedAddress),
+          name: p.displayName,
+          lat: p.location.lat(),
+          lng: p.location.lng(),
+          categories: mapped.categories,
+          suggestedMinutes: mapped.suggestedMinutes,
+          avgCostNtd: mapped.avgCostNtd,
+          openMinutes: 480,
+          closeMinutes: 1320,
+          closedDays: [],
+          isIndoor: mapped.isIndoor,
+          rating: p.rating,
+          reviewCount: p.userRatingCount,
+          highlight: cleanAddress || 'Google Maps 精選熱門地點',
+        });
+      }
+      return pois;
     }
   } catch {
-    // Fall through to legacy PlacesService if Place.searchNearby is not permitted
+    // Fall through to legacy PlacesService
   }
 
   // 2. Fallback to classic PlacesService
   if (!g.google?.maps?.places?.PlacesService) {
-    throw new Error('Google Maps Places 服務尚未啟用，請確認已啟用 Places API (New) 與 Maps JavaScript API。');
+    throw new Error(
+      'Google Maps Places 服務尚未啟用，請確認已啟用 Places API (New) 與 Maps JavaScript API。'
+    );
   }
 
   const dummyDiv = document.createElement('div');
@@ -353,7 +457,11 @@ export async function fetchGooglePlacesPois(
         return;
       }
       if (status !== 'OK' || !results) {
-        reject(new Error(`Google Maps Places 查詢失敗 (${status})，請確認金鑰網域限制與計費設定。`));
+        reject(
+          new Error(
+            `Google Maps Places 查詢失敗 (${status})，請確認金鑰網域限制與計費設定。`
+          )
+        );
         return;
       }
 
@@ -363,16 +471,14 @@ export async function fetchGooglePlacesPois(
           const lat = p.geometry!.location!.lat();
           const lng = p.geometry!.location!.lng();
           const mapped = mapGoogleTypesToCategories(p.types);
-          const addr = p.vicinity || p.formatted_address || '';
-          const ratingStr = p.rating
-            ? `⭐ ${p.rating.toFixed(1)} (${p.user_ratings_total ?? 0})`
-            : 'Google Maps 景點';
+          const rawAddr = p.formatted_address || p.vicinity || '';
+          const cleanAddr = rawAddr.replace(/^\d{3,6}\s*(?:台灣|臺灣)?/, '').trim();
 
           return {
             id: `gmap-${p.place_id ?? p.name}`,
             placeId: p.place_id,
-            city: 'live' as const,
-            district: addr.slice(0, 12) || 'Google Maps',
+            city: 'live',
+            district: extractTaiwanDistrict(rawAddr),
             name: p.name!,
             lat,
             lng,
@@ -383,7 +489,9 @@ export async function fetchGooglePlacesPois(
             closeMinutes: 1320,
             closedDays: [],
             isIndoor: mapped.isIndoor,
-            highlight: `[Google Maps] ${ratingStr}${addr ? ` · ${addr}` : ''}`,
+            rating: p.rating,
+            reviewCount: p.user_ratings_total,
+            highlight: cleanAddr || 'Google Maps 精選熱門地點',
           };
         });
 
@@ -391,9 +499,15 @@ export async function fetchGooglePlacesPois(
     };
 
     if (trimmedQuery) {
-      service.textSearch({ query: trimmedQuery, location, radius: radiusMeters }, handleResults);
+      service.textSearch(
+        { query: trimmedQuery, location, radius: sampleRadiusMeters },
+        handleResults
+      );
     } else {
-      service.nearbySearch({ location, radius: radiusMeters, type: 'tourist_attraction' }, handleResults);
+      service.nearbySearch(
+        { location, radius: sampleRadiusMeters, type: 'tourist_attraction' },
+        handleResults
+      );
     }
   });
 }
