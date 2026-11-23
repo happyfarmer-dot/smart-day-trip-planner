@@ -311,6 +311,13 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                                   ` (${stop.poi.reviewCount.toLocaleString()} 則評論)`}
                               </span>
                             )}
+                            {typeof stop.poi.rating === 'number' &&
+                              stop.poi.rating >= 4.4 &&
+                              (stop.poi.reviewCount ?? 0) >= 1000 && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-semibold">
+                                  🔥 高口碑
+                                </span>
+                              )}
                             {stop.isMealSlot && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-semibold">
                                 <Utensils className="w-2.5 h-2.5" />
@@ -420,6 +427,20 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
               </React.Fragment>
             );
           })}
+          {plan.returnLeg && plan.stops.length > 0 && (
+            <div
+              data-testid="return-leg"
+              className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-700"
+            >
+              <Navigation className="w-3.5 h-3.5 shrink-0 text-slate-600" />
+              <span className="font-medium tabular-nums">
+                第 {plan.stops.length} 站 → 返回出發點（回程移動：
+                {plan.returnLeg.modeLabel} · {plan.returnLeg.distanceKm} km · 約{' '}
+                {plan.returnLeg.durationMinutes} 分鐘 ·{' '}
+                {plan.returnLeg.costLabel}）
+              </span>
+            </div>
+          )}
           </>
         )}
       </div>

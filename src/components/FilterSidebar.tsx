@@ -411,12 +411,12 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         </div>
       </section>
 
-      {/* 2. 景點類型複選 */}
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-2.5">
+      {/* 2. 景點類型與地圖評分篩選 */}
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
             <Tag className="w-3.5 h-3.5 text-blue-600" />
-            2. 景點類型（可複選）
+            2. 景點類型與地圖評分篩選
           </h2>
           <button
             type="button"
@@ -454,6 +454,70 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
               </button>
             );
           })}
+        </div>
+
+        {/* 地圖評分與口碑篩選 */}
+        <div className="pt-2.5 border-t border-slate-100 space-y-2.5">
+          <div className="space-y-1">
+            <div className="text-[11px] font-medium text-slate-500">
+              最低 Google 評分
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { label: '不限', val: 0 },
+                { label: '3.8★+', val: 3.8 },
+                { label: '4.0★+', val: 4.0 },
+                { label: '4.2★+', val: 4.2 },
+                { label: '4.5★+', val: 4.5 },
+              ].map((opt) => (
+                <button
+                  key={opt.val}
+                  type="button"
+                  data-testid={`min-rating-${opt.val}`}
+                  onClick={() =>
+                    onChange((prev) => ({ ...prev, minRating: opt.val }))
+                  }
+                  className={`px-2.5 py-1 rounded-full border text-[11px] font-medium transition cursor-pointer ${
+                    config.minRating === opt.val
+                      ? 'border-amber-400 bg-amber-50 text-amber-800 font-semibold'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[11px] font-medium text-slate-500">
+              最低評論數（防洗評）
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { label: '不限', val: 0 },
+                { label: '≥ 50 則', val: 50 },
+                { label: '≥ 200 則', val: 200 },
+                { label: '≥ 500 則', val: 500 },
+              ].map((opt) => (
+                <button
+                  key={opt.val}
+                  type="button"
+                  data-testid={`min-reviews-${opt.val}`}
+                  onClick={() =>
+                    onChange((prev) => ({ ...prev, minReviews: opt.val }))
+                  }
+                  className={`px-2.5 py-1 rounded-full border text-[11px] font-medium transition cursor-pointer ${
+                    config.minReviews === opt.val
+                      ? 'border-blue-400 bg-blue-50 text-blue-700 font-semibold'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 

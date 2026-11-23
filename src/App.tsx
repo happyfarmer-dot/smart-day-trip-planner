@@ -29,6 +29,8 @@ const INITIAL_CONFIG: PlannerConfig = {
     intraZoneDistanceKm: 10,
   },
   selectedCategories: ['food', 'art', 'cafe', 'shop'],
+  minRating: 4.0,
+  minReviews: 50,
   startMinutes: 600, // 10:00
   endMinutes: 1200, // 20:00
   pace: 'balanced',
@@ -253,11 +255,27 @@ export function App() {
   };
 
   const handleMobileFloatingScroll = () => {
-    const next = mobileTarget === 'map' ? 'itinerary' : 'map';
     const targetId = mobileTarget === 'map' ? 'map-section' : 'itinerary-section';
     document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth' });
-    setMobileTarget(next);
   };
+
+  useEffect(() => {
+    const itinEl = document.getElementById('itinerary-section');
+    if (!itinEl || typeof IntersectionObserver === 'undefined') return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          setMobileTarget('map');
+        } else {
+          setMobileTarget('itinerary');
+        }
+      },
+      { threshold: 0.15 }
+    );
+    obs.observe(itinEl);
+    return () => obs.disconnect();
+  }, [plan.stops.length]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">

@@ -56,6 +56,8 @@ export interface PlannerConfig {
   city: 'taichung' | 'taipei';
   geoFilter: GeoFilter;
   selectedCategories: CategoryId[];
+  minRating: number;            // 0 | 3.8 | 4.0 | 4.2 | 4.5 (default 4.0)
+  minReviews: number;           // 0 | 50 | 200 | 500 (default 50)
   startMinutes: number;         // e.g. 600 (10:00)
   endMinutes: number;           // e.g. 1200 (20:00)
   pace: PaceMode;
@@ -94,6 +96,7 @@ export interface ScheduledStop {
 export interface DayPlan {
   stops: ScheduledStop[];
   outboundLeg?: TransitLeg;     // 出發點 -> 第 1 站去程遠征段
+  returnLeg?: TransitLeg;       // 最後一站 -> 返回出發點回程段
   eligibleCount: number;
   totalTicketAndActivityCost: number; // 門票體驗
   totalFoodCost: number;              // 餐飲咖啡

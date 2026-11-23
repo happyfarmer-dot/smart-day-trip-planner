@@ -41,6 +41,25 @@ export function extractTaiwanDistrict(address?: string): string {
   return '精選地點';
 }
 
+export function cleanGooglePlaceName(name: string): string {
+  return name
+    .replace(/[-－—]\s*(一般有得來速|得來速|旗艦店|創始店|總店|門市|分店).*$/g, '')
+    .replace(/[（(][^）)]*(?:老店|門市|分店|有得來速|旗艦)[^）)]*[）)]/g, '')
+    .trim();
+}
+
+export function estimatePriceLevelCost(
+  priceLevel: string | number | undefined,
+  defaultCost: number
+): number {
+  if (priceLevel === undefined || priceLevel === null) return defaultCost;
+  const str = String(priceLevel).toUpperCase();
+  if (str === '1' || str.includes('INEXPENSIVE') || str.includes('FREE')) return 120;
+  if (str === '2' || str.includes('MODERATE')) return 280;
+  if (str === '3' || str === '4' || str.includes('EXPENSIVE')) return 550;
+  return defaultCost;
+}
+
 function isLikelyTaiwanLand(lat: number, lng: number): boolean {
   if (lat < 21.88 || lat > 25.32 || lng < 120.02 || lng > 122.02) return false;
   // Exclude western Taiwan Strait open water
@@ -340,6 +359,7 @@ export async function fetchGooglePlacesPois(
         'types',
         'rating',
         'userRatingCount',
+        'priceLevel',
       ];
 
       const allRaw: Array<{
@@ -350,6 +370,7 @@ export async function fetchGooglePlacesPois(
         types?: string[];
         rating?: number;
         userRatingCount?: number;
+        priceLevel?: string;
       }> = [];
 
       if (trimmedQuery) {
@@ -365,28 +386,38 @@ export async function fetchGooglePlacesPois(
         });
         allRaw.push(...(res.places ?? []));
       } else {
-        const responses = await Promise.allSettled(
-          sampleCenters.map((sc) =>
-            PlaceClass.searchNearby!({
-              fields,
-              locationRestriction: {
-                center: { lat: sc.lat, lng: sc.lng },
-                radius: sampleRadiusMeters,
-              },
-              includedPrimaryTypes: [
-                'tourist_attraction',
-                'museum',
-                'park',
-                'restaurant',
-                'cafe',
-                'shopping_mall',
-                'historical_landmark',
-              ],
-              maxResultCount: 15,
-              language: 'zh-TW',
-            })
-          )
+        // 65% Attractions + 35% Dining parallel requests
+        const attractionReqs = sampleCenters.map((sc) =>
+          PlaceClass.searchNearby!({
+            fields,
+            locationRestriction: {
+              center: { lat: sc.lat, lng: sc.lng },
+              radius: sampleRadiusMeters,
+            },
+            includedPrimaryTypes: [
+              'tourist_attraction',
+              'museum',
+              'park',
+              'historical_landmark',
+              'art_gallery',
+            ],
+            maxResultCount: 13,
+            language: 'zh-TW',
+          })
         );
+        const diningReqs = sampleCenters.slice(0, 3).map((sc) =>
+          PlaceClass.searchNearby!({
+            fields,
+            locationRestriction: {
+              center: { lat: sc.lat, lng: sc.lng },
+              radius: sampleRadiusMeters,
+            },
+            includedPrimaryTypes: ['restaurant', 'cafe'],
+            maxResultCount: 7,
+            language: 'zh-TW',
+          })
+        );
+        const responses = await Promise.allSettled([...attractionReqs, ...diningReqs]);
         for (const r of responses) {
           if (r.status === 'fulfilled') {
             allRaw.push(...(r.value.places ?? []));
@@ -401,17 +432,20 @@ export async function fetchGooglePlacesPois(
         seen.add(p.id);
         const mapped = mapGoogleTypesToCategories(p.types);
         const cleanAddress = p.formattedAddress?.replace(/^\d{3,6}\s*(?:台灣|臺灣)?/, '').trim();
+        const isDining = mapped.categories.includes('food') || mapped.categories.includes('cafe');
         pois.push({
           id: `gmap-${p.id}`,
           placeId: p.id,
           city: 'live',
           district: extractTaiwanDistrict(p.formattedAddress),
-          name: p.displayName,
+          name: cleanGooglePlaceName(p.displayName),
           lat: p.location.lat(),
           lng: p.location.lng(),
           categories: mapped.categories,
           suggestedMinutes: mapped.suggestedMinutes,
-          avgCostNtd: mapped.avgCostNtd,
+          avgCostNtd: isDining
+            ? estimatePriceLevelCost(p.priceLevel, mapped.avgCostNtd)
+            : mapped.avgCostNtd,
           openMinutes: 480,
           closeMinutes: 1320,
           closedDays: [],
