@@ -1,20 +1,76 @@
 import * as turf from '@turf/turf';
 import type {
   DayPlan,
+  GeoFilter,
   PaceMode,
   POI,
   PlannerConfig,
   ScheduledStop,
   TransitLeg,
+  TransportMode,
 } from '../types/planner';
 
 const DETOUR_FACTOR = 1.3;
-const PARKING_WALK_BUFFER_MIN = 15;
 
 export function formatMinutes(mins: number): string {
   const h = Math.floor(mins / 60) % 24;
   const m = Math.round(mins % 60);
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+export function getGeoCenter(geoFilter: GeoFilter): { lat: number; lng: number } {
+  if (geoFilter.mode === 'radius') return geoFilter.center;
+  const coords = geoFilter.coordinates;
+  if (coords.length === 0) return { lat: 24.155, lng: 120.655 };
+  const unique = coords.length > 1 ? coords.slice(0, -1) : coords;
+  const sum = unique.reduce(
+    (acc, [lng, lat]) => ({ lat: acc.lat + lat, lng: acc.lng + lng }),
+    { lat: 0, lng: 0 }
+  );
+  return {
+    lat: sum.lat / unique.length,
+    lng: sum.lng / unique.length,
+  };
+}
+
+const TAIWAN_REGION_ANCHORS: Array<{ name: string; lat: number; lng: number }> = [
+  { name: '台北大安／中正周邊', lat: 25.035, lng: 121.530 },
+  { name: '台北信義／松山周邊', lat: 25.041, lng: 121.565 },
+  { name: '台北大同／中山周邊', lat: 25.055, lng: 121.515 },
+  { name: '北投／士林周邊', lat: 25.125, lng: 121.515 },
+  { name: '淡水／北海岸周邊', lat: 25.175, lng: 121.435 },
+  { name: '板橋／新北周邊', lat: 25.012, lng: 121.465 },
+  { name: '基隆／東北角周邊', lat: 25.128, lng: 121.742 },
+  { name: '桃園／中壢周邊', lat: 24.993, lng: 121.301 },
+  { name: '新竹市區周邊', lat: 24.806, lng: 120.968 },
+  { name: '苗栗／三義周邊', lat: 24.415, lng: 120.772 },
+  { name: '台中西屯／北區周邊', lat: 24.160, lng: 120.652 },
+  { name: '台中中區／西區周邊', lat: 24.142, lng: 120.675 },
+  { name: '台中海線／清水梧棲', lat: 24.275, lng: 120.555 },
+  { name: '彰化／鹿港周邊', lat: 24.065, lng: 120.495 },
+  { name: '南投／日月潭周邊', lat: 23.865, lng: 120.915 },
+  { name: '嘉義市區周邊', lat: 23.480, lng: 120.449 },
+  { name: '台南府城／安平周邊', lat: 22.995, lng: 120.190 },
+  { name: '高雄市區周邊', lat: 22.627, lng: 120.301 },
+  { name: '宜蘭／羅東周邊', lat: 24.757, lng: 121.753 },
+  { name: '花蓮市區周邊', lat: 23.987, lng: 121.601 },
+];
+
+export function getRegionLabel(geoFilter: GeoFilter): string {
+  const center = getGeoCenter(geoFilter);
+  let best = TAIWAN_REGION_ANCHORS[0];
+  let bestDist = Infinity;
+  for (const anchor of TAIWAN_REGION_ANCHORS) {
+    const d = calcStraightDistanceKm(center, anchor);
+    if (d < bestDist) {
+      bestDist = d;
+      best = anchor;
+    }
+  }
+  if (bestDist > 35) {
+    return `目前圈選區域 (${center.lat.toFixed(2)}, ${center.lng.toFixed(2)})`;
+  }
+  return best.name;
 }
 
 export function calcStraightDistanceKm(
@@ -30,37 +86,61 @@ export function calcStraightDistanceKm(
 
 export function estimateTransitLeg(
   from: { lat: number; lng: number },
-  to: { lat: number; lng: number }
+  to: { lat: number; lng: number },
+  transportMode: TransportMode = 'scooter'
 ): TransitLeg {
   const straightKm = calcStraightDistanceKm(from, to);
   const distanceKm = Math.round(straightKm * DETOUR_FACTOR * 10) / 10;
 
-  if (distanceKm <= 1.1) {
-    const durationMinutes = Math.max(5, Math.round((distanceKm / 4.5) * 60));
+  if (transportMode === 'walk') {
+    const durationMinutes = Math.max(4, Math.round((distanceKm / 4.5) * 60));
+    const isLongWalk = distanceKm > 1.5;
     return {
       distanceKm,
       durationMinutes,
       estimatedCostNtd: 0,
       modeLabel: '步行',
+      costLabel: isLongWalk ? '步行距離較長' : '免費',
+      isLongWalk,
     };
   }
 
-  if (distanceKm <= 6.5) {
-    const driveMins = Math.round((distanceKm / 22) * 60);
+  if (transportMode === 'transit') {
+    const rideMins = Math.round((distanceKm / 18) * 60);
+    const durationMinutes = Math.max(8, rideMins + 12);
+    const estimatedCostNtd = distanceKm <= 5 ? 20 : 35;
     return {
       distanceKm,
-      durationMinutes: driveMins + PARKING_WALK_BUFFER_MIN,
-      estimatedCostNtd: 25,
-      modeLabel: '大眾運輸 / 騎車',
+      durationMinutes,
+      estimatedCostNtd,
+      modeLabel: '大眾運輸',
+      costLabel: `車資約 NT$ ${estimatedCostNtd}`,
     };
   }
 
-  const driveMins = Math.round((distanceKm / 32) * 60);
+  if (transportMode === 'drive') {
+    const driveMins = Math.round((distanceKm / 32) * 60);
+    const durationMinutes = Math.max(5, driveMins + 4);
+    const estimatedCostNtd = Math.round(distanceKm * 6 + 30);
+    return {
+      distanceKm,
+      durationMinutes,
+      estimatedCostNtd,
+      modeLabel: '開車',
+      costLabel: `油資停車約 NT$ ${estimatedCostNtd}`,
+    };
+  }
+
+  // Default: 'scooter' (騎車)
+  const rideMins = Math.round((distanceKm / 28) * 60);
+  const durationMinutes = Math.max(4, rideMins + 2);
+  const estimatedCostNtd = Math.round(Math.max(5, distanceKm * 4));
   return {
     distanceKm,
-    durationMinutes: driveMins + PARKING_WALK_BUFFER_MIN,
-    estimatedCostNtd: Math.round(85 + distanceKm * 20),
-    modeLabel: '開車 / 計程車',
+    durationMinutes,
+    estimatedCostNtd,
+    modeLabel: '騎車',
+    costLabel: `油資約 NT$ ${estimatedCostNtd}`,
   };
 }
 
@@ -93,7 +173,6 @@ export function filterEligiblePois(allPois: POI[], config: PlannerConfig): POI[]
   const catSet = new Set(config.selectedCategories);
 
   return allPois.filter((poi) => {
-    if (poi.city !== config.city) return false;
     if (excludedSet.has(poi.id)) return false;
     if (!isPoiInGeoFilter(poi, config)) return false;
     if (poi.closedDays.includes(config.dayOfWeek)) return false;
@@ -111,7 +190,6 @@ export function optimizeRoute2Opt(pois: POI[], startCoord?: { lat: number; lng: 
   const remaining = [...pois];
   const ordered: POI[] = [];
 
-  // Pick initial node closest to startCoord (or first node)
   if (startCoord) {
     remaining.sort(
       (a, b) => calcStraightDistanceKm(startCoord, a) - calcStraightDistanceKm(startCoord, b)
@@ -133,7 +211,6 @@ export function optimizeRoute2Opt(pois: POI[], startCoord?: { lat: number; lng: 
     ordered.push(remaining.splice(bestIdx, 1)[0]);
   }
 
-  // 2-opt improvement pass
   let improved = true;
   let guard = 0;
   while (improved && guard++ < 50) {
@@ -158,7 +235,11 @@ export function optimizeRoute2Opt(pois: POI[], startCoord?: { lat: number; lng: 
   return ordered;
 }
 
-function resolvePoiWithRainySwap(poi: POI, config: PlannerConfig, allPois: POI[]): {
+function resolvePoiWithRainySwap(
+  poi: POI,
+  config: PlannerConfig,
+  allPois: POI[]
+): {
   poi: POI;
   activeRainyPlanB: boolean;
   originalOutdoorPoi?: POI;
@@ -186,7 +267,9 @@ function buildStopsFromSequence(
     const resolved = resolvePoiWithRainySwap(sequence[i], config, allPois);
     const poi = resolved.poi;
     const prevStop = stops[stops.length - 1];
-    const transitFromPrev = prevStop ? estimateTransitLeg(prevStop.poi, poi) : undefined;
+    const transitFromPrev = prevStop
+      ? estimateTransitLeg(prevStop.poi, poi, config.transportMode)
+      : undefined;
     const arrival = currentMinutes + (transitFromPrev ? transitFromPrev.durationMinutes : 0);
     const stay = getStayMinutes(poi, config.pace);
     const departure = arrival + stay;
@@ -213,14 +296,65 @@ function buildStopsFromSequence(
   return stops;
 }
 
+export function summarizePlan(
+  stops: ScheduledStop[],
+  eligibleCount: number,
+  config: PlannerConfig,
+  baseWarnings: string[] = []
+): DayPlan {
+  let totalTicketAndActivityCost = 0;
+  let totalFoodCost = 0;
+  let totalShopCost = 0;
+  let totalTransitCost = 0;
+  let totalDistanceKm = 0;
+
+  stops.forEach((s) => {
+    if (s.transitFromPrev) {
+      totalTransitCost += s.transitFromPrev.estimatedCostNtd;
+      totalDistanceKm += s.transitFromPrev.distanceKm;
+    }
+
+    const cats = s.poi.categories;
+    if (cats.includes('food') || cats.includes('cafe')) {
+      totalFoodCost += s.poi.avgCostNtd;
+    } else if (cats.includes('shop')) {
+      totalShopCost += s.poi.avgCostNtd;
+    } else {
+      totalTicketAndActivityCost += s.poi.avgCostNtd;
+    }
+  });
+
+  const totalCostNtd =
+    totalTicketAndActivityCost + totalFoodCost + totalShopCost + totalTransitCost;
+  const isOverBudget = totalCostNtd > config.budgetNtd;
+  const warnings = [...baseWarnings];
+
+  if (isOverBudget) {
+    warnings.push(
+      `預估總花費 NT$ ${totalCostNtd.toLocaleString()} 已超出預算 NT$ ${config.budgetNtd.toLocaleString()}（超支 NT$ ${(totalCostNtd - config.budgetNtd).toLocaleString()}），建議移除高單價站點或提高預算。`
+    );
+  }
+
+  return {
+    stops,
+    eligibleCount,
+    totalTicketAndActivityCost,
+    totalFoodCost,
+    totalShopCost,
+    totalTransitCost,
+    totalCostNtd,
+    totalDistanceKm: Math.round(totalDistanceKm * 10) / 10,
+    isOverBudget,
+    warnings,
+  };
+}
+
 export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan {
   const warnings: string[] = [];
   const eligible = filterEligiblePois(allPois, config);
 
-  // Also gather food POIs in geoFilter even if user didn't select 'food'
   const foodPoolInArea = allPois.filter(
     (p) =>
-      p.city === config.city &&
       !config.excludedPoiIds.includes(p.id) &&
       !p.closedDays.includes(config.dayOfWeek) &&
       isPoiInGeoFilter(p, config) &&
@@ -233,6 +367,7 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
       eligibleCount: 0,
       totalTicketAndActivityCost: 0,
       totalFoodCost: 0,
+      totalShopCost: 0,
       totalTransitCost: 0,
       totalCostNtd: 0,
       totalDistanceKm: 0,
@@ -241,23 +376,17 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     };
   }
 
-  const startCoord =
-    config.geoFilter.mode === 'radius'
-      ? config.geoFilter.center
-      : { lat: eligible[0].lat, lng: eligible[0].lng };
-
+  const startCoord = getGeoCenter(config.geoFilter);
   const lockedSet = new Set(config.lockedPoiIds);
   const usedIds = new Set<string>();
   const chosen: POI[] = [];
 
-  // Prioritize locked POIs first
   const lockedPois = eligible.filter((p) => lockedSet.has(p.id));
   lockedPois.forEach((p) => {
     chosen.push(p);
     usedIds.add(p.id);
   });
 
-  // Determine target stop count by duration & pace
   const totalHours = Math.max(1, (config.endMinutes - config.startMinutes) / 60);
   const maxStops =
     config.pace === 'relaxed'
@@ -275,7 +404,6 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     warnings.push('您未勾選「在地美食／小吃」，系統已於午／晚餐時段自動為您保留或安插用餐空檔。');
   }
 
-  // Greedy selection with opening hours, meal alignment, fatigue prevention, & budget tendency
   let safety = 0;
   while (chosen.length < maxStops && safety++ < 30) {
     const lastPoi = chosen[chosen.length - 1];
@@ -292,7 +420,9 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
         const dist = lastPoi
           ? calcStraightDistanceKm(lastPoi, cand)
           : calcStraightDistanceKm(startCoord, cand);
-        const transit = lastPoi ? estimateTransitLeg(lastPoi, cand) : { durationMinutes: 0, estimatedCostNtd: 0 };
+        const transit = lastPoi
+          ? estimateTransitLeg(lastPoi, cand, config.transportMode)
+          : { durationMinutes: 0, estimatedCostNtd: 0 };
         const arrival = curTime + transit.durationMinutes;
         const stay = getStayMinutes(cand, config.pace);
         const departure = arrival + stay;
@@ -304,7 +434,6 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
         if (!isOpen) score += 200;
         if (!fitsTime) score += 300;
 
-        // Fatigue prevention: after 2 consecutive outdoor spots, strongly prefer indoor or cafe
         if (consecutiveOutdoor >= 2 && !cand.isIndoor && !cand.categories.includes('cafe')) {
           score += 25;
         }
@@ -312,14 +441,12 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
           score -= 12;
         }
 
-        // Meal alignment bonus
         if (needMeal && cand.categories.includes('food')) {
           score -= 30;
         } else if (!needMeal && cand.categories.includes('food') && lastPoi?.categories.includes('food')) {
           score += 18;
         }
 
-        // Budget tendency weighting
         if (config.budgetTendency === 'saver') {
           score += cand.avgCostNtd / 50;
         } else if (config.budgetTendency === 'foodie' && cand.categories.includes('food')) {
@@ -355,11 +482,9 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     }
   }
 
-  // Run 2-opt route optimization
   let ordered = optimizeRoute2Opt(chosen, startCoord);
-
-  // Build initial stops and ensure lunch food stop stays in lunch window (11:00-14:00)
   let stops = buildStopsFromSequence(ordered, config, allPois);
+
   if (config.startMinutes <= 750 && config.endMinutes >= 780) {
     const hasLunchFood = stops.some(
       (s) => s.poi.categories.includes('food') && s.arrivalMinutes >= 660 && s.arrivalMinutes <= 840
@@ -367,7 +492,6 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     if (!hasLunchFood) {
       const foodIdx = ordered.findIndex((p) => p.categories.includes('food'));
       if (foodIdx !== -1) {
-        // Find slot closest to 12:00 (720)
         let bestSlot = 0;
         let bestDiff = Infinity;
         stops.forEach((s, idx) => {
@@ -384,7 +508,6 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     }
   }
 
-  // Budget control: if over budget, try downgrading expensive unlocked stops
   const calcTotal = (st: ScheduledStop[]) =>
     st.reduce(
       (sum, s) => sum + s.poi.avgCostNtd + (s.transitFromPrev?.estimatedCostNtd ?? 0),
@@ -393,7 +516,6 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
 
   let budgetGuard = 0;
   while (calcTotal(stops) > config.budgetNtd && budgetGuard++ < 10) {
-    // Find most expensive unlocked stop
     const expensiveIdx = stops
       .map((s, idx) => ({ s, idx }))
       .filter(({ s }) => !s.isLocked && s.poi.avgCostNtd > 0)
@@ -417,46 +539,42 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
     stops = buildStopsFromSequence(ordered, config, allPois);
   }
 
-  // Summarize costs
-  let totalTicketAndActivityCost = 0;
-  let totalFoodCost = 0;
-  let totalTransitCost = 0;
-  let totalDistanceKm = 0;
-
-  stops.forEach((s) => {
-    if (s.transitFromPrev) {
-      totalTransitCost += s.transitFromPrev.estimatedCostNtd;
-      totalDistanceKm += s.transitFromPrev.distanceKm;
-    }
-    if (s.poi.categories.includes('food')) totalFoodCost += s.poi.avgCostNtd;
-    else totalTicketAndActivityCost += s.poi.avgCostNtd;
-  });
-
-  const totalCostNtd = totalTicketAndActivityCost + totalFoodCost + totalTransitCost;
-  const isOverBudget = totalCostNtd > config.budgetNtd;
-
-  if (isOverBudget) {
-    warnings.push(
-      `預估總花費 NT$ ${totalCostNtd.toLocaleString()} 已超出預算 NT$ ${config.budgetNtd.toLocaleString()}（超支 NT$ ${(totalCostNtd - config.budgetNtd).toLocaleString()}），建議移除高單價站點或提高預算。`
-    );
-  }
-
-  return {
-    stops,
-    eligibleCount: eligible.length,
-    totalTicketAndActivityCost,
-    totalFoodCost,
-    totalTransitCost,
-    totalCostNtd,
-    totalDistanceKm: Math.round(totalDistanceKm * 10) / 10,
-    isOverBudget,
-    warnings,
-  };
+  return summarizePlan(stops, eligible.length, config, warnings);
 }
 
 /**
- * Reroll a single stop with another eligible candidate in the area
+ * Recalculate timing, transit legs, and budget after transport mode change or manual stop reordering
  */
+export function recalculatePlanStops(
+  currentStops: ScheduledStop[],
+  eligibleCount: number,
+  config: PlannerConfig,
+  allPois: POI[]
+): DayPlan {
+  const seq = currentStops.map((s) => s.originalOutdoorPoi ?? s.poi);
+  const rebuilt = buildStopsFromSequence(seq, config, allPois);
+  const baseWarnings: string[] = [];
+  if (!config.selectedCategories.includes('food')) {
+    baseWarnings.push('您未勾選「在地美食／小吃」，系統已於午／晚餐時段自動為您保留或安插用餐空檔。');
+  }
+  return summarizePlan(rebuilt, eligibleCount, config, baseWarnings);
+}
+
+export function moveStopInPlan(
+  currentPlan: DayPlan,
+  index: number,
+  direction: -1 | 1,
+  config: PlannerConfig,
+  allPois: POI[]
+): DayPlan {
+  const targetIdx = index + direction;
+  if (targetIdx < 0 || targetIdx >= currentPlan.stops.length) return currentPlan;
+  const copy = [...currentPlan.stops];
+  const [moved] = copy.splice(index, 1);
+  copy.splice(targetIdx, 0, moved);
+  return recalculatePlanStops(copy, currentPlan.eligibleCount, config, allPois);
+}
+
 export function rerollSingleStop(
   currentPlan: DayPlan,
   stopIndex: number,

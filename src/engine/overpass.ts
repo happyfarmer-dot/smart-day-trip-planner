@@ -52,7 +52,7 @@ out center 220;
 `.trim();
 }
 
-function mapOsmTagsToPoi(el: OverpassElement, city: 'taichung' | 'taipei'): POI | null {
+function mapOsmTagsToPoi(el: OverpassElement, _city: 'taichung' | 'taipei'): POI | null {
   const tags = el.tags;
   if (!tags || !tags.name) return null;
 
@@ -136,7 +136,7 @@ function mapOsmTagsToPoi(el: OverpassElement, city: 'taichung' | 'taipei'): POI 
 
   return {
     id: `osm-${el.type}-${el.id}`,
-    city,
+    city: 'live',
     district,
     name: tags.name,
     lat,

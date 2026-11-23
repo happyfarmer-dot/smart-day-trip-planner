@@ -17,7 +17,8 @@ export interface CategoryMeta {
 
 export interface POI {
   id: string;
-  city: 'taichung' | 'taipei';
+  placeId?: string;             // Google Places ID (for direct review/map link)
+  city: 'taichung' | 'taipei' | 'live';
   district: string;
   name: string;
   lat: number;
@@ -25,10 +26,10 @@ export interface POI {
   categories: CategoryId[];
   suggestedMinutes: number;     // 標準建議停留分鐘數
   avgCostNtd: number;           // 平均消費／門票（NT$）
-  openMinutes: number;          // 每日營業開始（自 00:00 起算分鐘數，如 540 = 09:00）
-  closeMinutes: number;         // 每日營業結束（如 1260 = 21:00）
-  closedDays: number[];         // 公休日（0=週日, 1=週一 ... 6=週六）
-  isIndoor: boolean;            // 室內／戶外屬性（體力防呆與雨天備案）
+  openMinutes: number;          // 每日營業開始（自 00:00 起算分鐘數）
+  closeMinutes: number;         // 每日營業結束
+  closedDays: number[];         // 公休日（0=週日 .. 6=週六）
+  isIndoor: boolean;            // 室內／戶外屬性
   highlight: string;            // 一句話亮點
   rainyBackupId?: string;       // 推薦的鄰近室內雨天備案 POI ID
 }
@@ -46,6 +47,7 @@ export type GeoFilter =
 
 export type PaceMode = 'relaxed' | 'balanced' | 'packed';
 export type BudgetTendency = 'saver' | 'balanced' | 'foodie';
+export type TransportMode = 'drive' | 'scooter' | 'transit' | 'walk';
 
 export interface PlannerConfig {
   city: 'taichung' | 'taipei';
@@ -54,6 +56,7 @@ export interface PlannerConfig {
   startMinutes: number;         // e.g. 600 (10:00)
   endMinutes: number;           // e.g. 1200 (20:00)
   pace: PaceMode;
+  transportMode: TransportMode;
   budgetNtd: number;
   budgetTendency: BudgetTendency;
   dayOfWeek: number;            // 0-6
@@ -64,9 +67,11 @@ export interface PlannerConfig {
 
 export interface TransitLeg {
   distanceKm: number;           // 直線距離 * 1.3 迂迴係數
-  durationMinutes: number;      // 車程 + 15 分鐘停車／步行緩衝 (若非步行)
-  estimatedCostNtd: number;
-  modeLabel: '步行' | '大眾運輸 / 騎車' | '開車 / 計程車';
+  durationMinutes: number;      // 依交通方式計算之移動時間
+  estimatedCostNtd: number;     // 預估交通／油資／停車費
+  modeLabel: '開車' | '騎車' | '大眾運輸' | '步行';
+  costLabel: string;
+  isLongWalk?: boolean;         // 步行超過 1.5 km 提醒
 }
 
 export interface ScheduledStop {
@@ -85,9 +90,10 @@ export interface ScheduledStop {
 export interface DayPlan {
   stops: ScheduledStop[];
   eligibleCount: number;
-  totalTicketAndActivityCost: number;
-  totalFoodCost: number;
-  totalTransitCost: number;
+  totalTicketAndActivityCost: number; // 門票體驗
+  totalFoodCost: number;              // 餐飲咖啡
+  totalShopCost: number;              // 購物伴手禮
+  totalTransitCost: number;           // 交通停車
   totalCostNtd: number;
   totalDistanceKm: number;
   isOverBudget: boolean;

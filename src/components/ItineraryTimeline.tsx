@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Calendar,
   Check,
   CloudRain,
   Copy,
+  ExternalLink,
   MapPin,
   Navigation,
   Pin,
@@ -28,6 +31,7 @@ interface ItineraryTimelineProps {
   onFocusStop: (poiId: string) => void;
   onToggleLock: (poiId: string) => void;
   onRerollStop: (index: number) => void;
+  onMoveStop: (index: number, direction: -1 | 1) => void;
   onToggleRainyPlanB: (originalPoi: POI) => void;
 }
 
@@ -39,10 +43,10 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
   onFocusStop,
   onToggleLock,
   onRerollStop,
+  onMoveStop,
   onToggleRainyPlanB,
 }) => {
   const [copied, setCopied] = useState(false);
-
   const gmapsUrl = buildGoogleMapsDirUrl(plan.stops);
 
   const handleCopyMarkdown = async () => {
@@ -52,7 +56,7 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback
+      // Fallback ignored
     }
   };
 
@@ -62,7 +66,7 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `day-trip-${config.city}.ics`;
+    a.download = `day-trip-plan.ics`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -73,7 +77,7 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
   );
 
   return (
-    <div className="space-y-4">
+    <div id="itinerary-section" className="space-y-4 scroll-mt-16">
       {/* KPI & 預算摘要卡片 */}
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -96,8 +100,13 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                 / {config.budgetNtd.toLocaleString()}
               </span>
             </div>
-            <div className="text-[11px] text-slate-500 tabular-nums">
-              門票體驗 {plan.totalTicketAndActivityCost} · 餐飲 {plan.totalFoodCost} · 交通 {plan.totalTransitCost}
+            <div
+              data-testid="budget-breakdown"
+              className="text-[11px] text-slate-500 tabular-nums"
+            >
+              門票體驗 NT$ {plan.totalTicketAndActivityCost} · 餐飲咖啡 NT${' '}
+              {plan.totalFoodCost} · 購物伴手禮 NT$ {plan.totalShopCost} · 交通停車 NT${' '}
+              {plan.totalTransitCost}
             </div>
           </div>
         </div>
@@ -127,46 +136,48 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
           </div>
         )}
 
-        {/* 出遊實用匯出列 */}
+        {/* 匯出按鈕區：滿版主按鈕 + 等寬雙欄 */}
         {plan.stops.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
+          <div className="space-y-2 pt-2 border-t border-slate-100">
             <a
               data-testid="export-gmaps"
               href={gmapsUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 min-w-[180px] py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+              className="w-full py-2.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition"
             >
               <Navigation className="w-3.5 h-3.5" />
-              匯出 Google Maps 導航
+              匯出 Google Maps 多點導航
             </a>
-            <button
-              type="button"
-              data-testid="export-markdown"
-              onClick={handleCopyMarkdown}
-              className="py-2 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium flex items-center gap-1.5 transition"
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  已複製 LINE 文字
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  複製行程文字
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              data-testid="export-ics"
-              onClick={handleDownloadIcs}
-              className="py-2 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium flex items-center gap-1.5 transition"
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              下載 .ics
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                data-testid="export-markdown"
+                onClick={handleCopyMarkdown}
+                className="w-full py-2 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium flex items-center justify-center gap-1.5 transition"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    已複製文字
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    複製行程文字
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                data-testid="export-ics"
+                onClick={handleDownloadIcs}
+                className="w-full py-2 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium flex items-center justify-center gap-1.5 transition"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                下載 .ics
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -183,11 +194,14 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
               CATEGORY_METAS.find((c) => c.id === stop.poi.categories[0]) ??
               CATEGORY_METAS[0];
             const isFocused = focusedPoiId === stop.poi.id;
-            const hasRainyOption =
-              !stop.poi.isIndoor || stop.activeRainyPlanB;
+            const showRainyBtn = !stop.poi.isIndoor || stop.activeRainyPlanB;
             const backupPoi = stop.poi.rainyBackupId
               ? allPois.find((p) => p.id === stop.poi.rainyBackupId)
-              : undefined;
+              : allPois.find((p) => p.isIndoor && p.id !== stop.poi.id);
+
+            const googleReviewUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+              stop.poi.name
+            )}${stop.poi.placeId ? `&query_place_id=${stop.poi.placeId}` : ''}`;
 
             return (
               <React.Fragment key={`${stop.poi.id}-${idx}`}>
@@ -195,14 +209,18 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                 {stop.transitFromPrev && (
                   <div className="flex items-center gap-2 pl-5 py-0.5 text-[11px] text-slate-500">
                     <div className="w-0.5 h-5 bg-slate-200" />
-                    <span className="px-2.5 py-0.5 rounded-full bg-slate-100 border border-slate-200 tabular-nums">
+                    <span
+                      data-testid={`transit-leg-${idx}`}
+                      className={`px-2.5 py-0.5 rounded-full border tabular-nums ${
+                        stop.transitFromPrev.isLongWalk
+                          ? 'bg-amber-50 border-amber-300 text-amber-800 font-medium'
+                          : 'bg-slate-100 border-slate-200 text-slate-600'
+                      }`}
+                    >
                       {stop.transitFromPrev.modeLabel} · 約{' '}
-                      {stop.transitFromPrev.durationMinutes} 分鐘（
-                      {stop.transitFromPrev.distanceKm} km
-                      {stop.transitFromPrev.estimatedCostNtd > 0
-                        ? ` · NT$ ${stop.transitFromPrev.estimatedCostNtd}`
-                        : ''}
-                      ）
+                      {stop.transitFromPrev.durationMinutes} 分鐘 (
+                      {stop.transitFromPrev.distanceKm} km ·{' '}
+                      {stop.transitFromPrev.costLabel})
                     </span>
                   </div>
                 )}
@@ -218,9 +236,34 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                   }`}
                 >
                   <div className="flex items-start gap-3">
-                    {/* 編號圓點 */}
-                    <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5 tabular-nums">
-                      {idx + 1}
+                    {/* 編號與上下微調 */}
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                      <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center tabular-nums">
+                        {idx + 1}
+                      </div>
+                      <div
+                        className="flex flex-col gap-0.5"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => onMoveStop(idx, -1)}
+                          title="往前移動"
+                          className="p-0.5 rounded border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 disabled:opacity-30"
+                        >
+                          <ArrowUp className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === plan.stops.length - 1}
+                          onClick={() => onMoveStop(idx, 1)}
+                          title="往後移動"
+                          className="p-0.5 rounded border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 disabled:opacity-30"
+                        >
+                          <ArrowDown className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex-1 min-w-0 space-y-1.5">
@@ -276,13 +319,23 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                             <MapPin className="w-3 h-3" />
                             {stop.poi.district}
                           </span>
-                          <span>· 停留 {stop.stayMinutes} 分鐘</span>
+                          <span>· 停留 {stop.stayMinutes} 分</span>
                           <span>· {stop.poi.isIndoor ? '室內' : '戶外'}</span>
                         </div>
 
-                        <div className="flex items-center gap-1.5">
-                          {/* 雨天備案切換 */}
-                          {hasRainyOption && (backupPoi || stop.activeRainyPlanB) && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <a
+                            data-testid={`gmaps-review-${idx}`}
+                            href={googleReviewUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2 py-1 rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50 flex items-center gap-1 transition"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            📍 Google 評論/地圖
+                          </a>
+
+                          {showRainyBtn && (backupPoi || stop.activeRainyPlanB) && (
                             <button
                               type="button"
                               onClick={() =>
@@ -295,20 +348,14 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                                   ? 'border-sky-400 bg-sky-50 text-sky-700 font-medium'
                                   : 'border-slate-200 text-slate-600 hover:bg-sky-50 hover:text-sky-700'
                               }`}
-                              title={
-                                stop.activeRainyPlanB
-                                  ? '切回原戶外景點'
-                                  : `切換室內備案：${backupPoi?.name}`
-                              }
                             >
                               <CloudRain className="w-3 h-3" />
                               {stop.activeRainyPlanB
                                 ? '切回原景點'
-                                : '☔ 雨天室內備案'}
+                                : '☔ 切換雨天室內備案'}
                             </button>
                           )}
 
-                          {/* 鎖定圖釘 */}
                           <button
                             type="button"
                             onClick={() => onToggleLock(stop.poi.id)}
@@ -322,7 +369,6 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                             {stop.isLocked ? '已鎖定' : '鎖定'}
                           </button>
 
-                          {/* 換一個 (Reroll) */}
                           <button
                             type="button"
                             data-testid={`reroll-btn-${idx}`}

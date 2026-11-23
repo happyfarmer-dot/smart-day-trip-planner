@@ -1,8 +1,15 @@
 import React from 'react';
 import {
+  Bike,
+  Bus,
+  Car,
   Clock,
   Compass,
   DollarSign,
+  Footprints,
+  Loader2,
+  Pin,
+  Search,
   Sparkles,
   Tag,
 } from 'lucide-react';
@@ -12,13 +19,24 @@ import type {
   CategoryId,
   PaceMode,
   PlannerConfig,
+  POI,
+  TransportMode,
 } from '../types/planner';
 import { formatMinutes } from '../engine/scheduler';
 
 interface FilterSidebarProps {
   config: PlannerConfig;
   eligibleCount: number;
+  searchQuery: string;
+  searchResults: POI[];
+  isFetchingMap: boolean;
+  mapDbStatus: string | null;
+  onSearchQueryChange: (q: string) => void;
+  onSearchSubmit: (keyword?: string) => void;
+  onFocusPoi: (poiId: string) => void;
+  onToggleLock: (poiId: string) => void;
   onChange: (updater: (prev: PlannerConfig) => PlannerConfig) => void;
+  onTransportChange: (mode: TransportMode) => void;
   onGenerate: () => void;
 }
 
@@ -33,10 +51,30 @@ const WEEKDAYS = [
   { value: 6, label: '週六' },
 ];
 
+const TRANSPORT_OPTIONS: Array<{
+  id: TransportMode;
+  label: string;
+  icon: React.ReactNode;
+}> = [
+  { id: 'drive', label: '開車', icon: <Car className="w-3.5 h-3.5" /> },
+  { id: 'scooter', label: '騎車', icon: <Bike className="w-3.5 h-3.5" /> },
+  { id: 'transit', label: '大眾運輸', icon: <Bus className="w-3.5 h-3.5" /> },
+  { id: 'walk', label: '步行', icon: <Footprints className="w-3.5 h-3.5" /> },
+];
+
 export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   config,
   eligibleCount,
+  searchQuery,
+  searchResults,
+  isFetchingMap,
+  mapDbStatus,
+  onSearchQueryChange,
+  onSearchSubmit,
+  onFocusPoi,
+  onToggleLock,
   onChange,
+  onTransportChange,
   onGenerate,
 }) => {
   const totalHours = Math.max(1, (config.endMinutes - config.startMinutes) / 60);
@@ -53,7 +91,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* 1. 空間圈選與距離模式 */}
+      {/* 1. 空間圈選與距離模式 + 關鍵字搜尋 */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
@@ -62,13 +100,13 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           </h2>
           <span
             data-testid="eligible-count"
-            className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200"
+            className="text-xs font-medium px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200"
           >
             {eligibleCount} 個符合景點
           </span>
         </div>
 
-        {/* 城市切換 */}
+        {/* 快速城市跳轉 */}
         <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-slate-100 text-xs">
           <button
             type="button"
@@ -93,7 +131,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            台中（西屯／北區／海線）
+            跳轉台中
           </button>
           <button
             type="button"
@@ -118,7 +156,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            台北（市區／北投／淡水）
+            跳轉台北
           </button>
         </div>
 
@@ -213,7 +251,12 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
               className="w-full accent-blue-600"
             />
             <p className="text-[11px] text-slate-500">
-              提示：點擊右側地圖任一處即可移動出發錨點。
+              <span className="hidden md:inline">
+                提示：點擊右側地圖任一處即可移動出發錨點並自動載入周邊景點。
+              </span>
+              <span className="md:hidden">
+                提示：點擊下方地圖任一處即可移動出發錨點並自動載入周邊景點。
+              </span>
             </p>
           </div>
         ) : (
@@ -221,6 +264,99 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
             已啟用多邊形模式：可使用地圖右上角繪圖工具繪製多邊形／矩形，或拖曳頂點微調範圍。
           </p>
         )}
+
+        {/* 整合進空間卡片的關鍵字搜尋 */}
+        <div className="pt-2 border-t border-slate-100 space-y-2">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              onSearchSubmit(searchQuery);
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <div className="relative flex-1">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                data-testid="map-search-input"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => onSearchQueryChange(e.target.value)}
+                placeholder="搜地圖景點、餐廳、咖啡..."
+                className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-slate-200 text-xs focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <button
+              type="submit"
+              data-testid="map-search-btn"
+              disabled={isFetchingMap}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-medium flex items-center gap-1 shrink-0 cursor-pointer"
+            >
+              {isFetchingMap ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Search className="w-3 h-3" />
+              )}
+              搜尋
+            </button>
+          </form>
+
+          {mapDbStatus && (
+            <p
+              data-testid="map-db-status"
+              className="text-[11px] text-blue-700 bg-blue-50/80 border border-blue-100 rounded-lg px-2 py-1 leading-snug"
+            >
+              {mapDbStatus}
+            </p>
+          )}
+
+          {searchQuery.trim() !== '' && (
+            <div
+              data-testid="search-results"
+              className="max-h-40 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-lg"
+            >
+              {searchResults.length === 0 ? (
+                <div className="p-2.5 text-[11px] text-slate-500 text-center">
+                  無快取結果，按「搜尋」可即時從地圖資料庫撈取。
+                </div>
+              ) : (
+                searchResults.map((poi) => {
+                  const isLocked = config.lockedPoiIds.includes(poi.id);
+                  return (
+                    <div
+                      key={poi.id}
+                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 hover:bg-slate-50 text-xs"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onFocusPoi(poi.id)}
+                        className="text-left flex-1 min-w-0"
+                      >
+                        <div className="font-semibold text-slate-900 truncate text-[11px]">
+                          {poi.name}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {poi.district}
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onToggleLock(poi.id)}
+                        className={`px-1.5 py-0.5 rounded border text-[10px] font-medium shrink-0 flex items-center gap-0.5 ${
+                          isLocked
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-slate-200 text-slate-700 hover:border-blue-400'
+                        }`}
+                      >
+                        <Pin className="w-2.5 h-2.5" />
+                        {isLocked ? '必去' : '加入'}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
       </section>
 
       {/* 2. 景點類型複選 */}
@@ -269,12 +405,12 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         </div>
       </section>
 
-      {/* 3. 時間與節奏 */}
+      {/* 3. 時間、節奏與交通方式 */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-blue-600" />
-            3. 時間與旅遊節奏
+            3. 時間、節奏與交通方式
           </h2>
           <span className="text-xs font-semibold text-slate-700 tabular-nums">
             共 {totalHours.toFixed(0)} 小時
@@ -339,6 +475,29 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                 </option>
               ))}
             </select>
+          </div>
+        </div>
+
+        {/* 交通方式選擇器 */}
+        <div className="space-y-1.5">
+          <div className="text-[11px] text-slate-500">主要交通工具</div>
+          <div className="grid grid-cols-4 gap-1.5 text-xs">
+            {TRANSPORT_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                data-testid={`transport-${opt.id}`}
+                onClick={() => onTransportChange(opt.id)}
+                className={`py-1.5 px-1 rounded-lg border font-medium flex flex-col items-center gap-0.5 transition cursor-pointer ${
+                  config.transportMode === opt.id
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {opt.icon}
+                <span className="text-[11px]">{opt.label}</span>
+              </button>
+            ))}
           </div>
         </div>
 

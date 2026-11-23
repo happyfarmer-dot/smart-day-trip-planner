@@ -14,8 +14,7 @@ import {
   useMap,
   useMapEvents,
 } from 'react-leaflet';
-import { CATEGORY_METAS } from '../data/pois';
-import { isPoiInGeoFilter } from '../engine/scheduler';
+import { getRegionLabel, isPoiInGeoFilter } from '../engine/scheduler';
 import type { DayPlan, PlannerConfig, POI } from '../types/planner';
 
 interface MapWorkspaceProps {
@@ -28,17 +27,17 @@ interface MapWorkspaceProps {
   onToggleLock?: (poiId: string) => void;
 }
 
-function createCategoryIcon(color: string, inRange: boolean) {
+function createCandidateIcon(inRange: boolean) {
   return L.divIcon({
     className: 'custom-poi-dot',
     html: `<div style="
-      width: ${inRange ? 14 : 10}px;
-      height: ${inRange ? 14 : 10}px;
+      width: ${inRange ? 13 : 9}px;
+      height: ${inRange ? 13 : 9}px;
       border-radius: 9999px;
-      background: ${inRange ? color : '#94a3b8'};
+      background: ${inRange ? '#f97316' : '#94a3b8'};
       border: 2px solid #ffffff;
       box-shadow: 0 1px 4px rgba(0,0,0,0.35);
-      opacity: ${inRange ? 1 : 0.45};
+      opacity: ${inRange ? 1 : 0.4};
     "></div>`,
     iconSize: [14, 14],
     iconAnchor: [7, 7],
@@ -92,7 +91,6 @@ const MapController: React.FC<{
   const drawnLayerRef = useRef<L.FeatureGroup | null>(null);
   const drawControlRef = useRef<L.Control | null>(null);
 
-  // Recenter when city changes
   useEffect(() => {
     if (prevCityRef.current !== config.city) {
       prevCityRef.current = config.city;
@@ -104,7 +102,6 @@ const MapController: React.FC<{
     }
   }, [config.city, map]);
 
-  // Focus on clicked itinerary stop
   useEffect(() => {
     if (!focusedPoiId) return;
     const poi = allPois.find((p) => p.id === focusedPoiId);
@@ -113,7 +110,6 @@ const MapController: React.FC<{
     }
   }, [focusedPoiId, allPois, map]);
 
-  // Click map to move radius anchor
   useMapEvents({
     click(e) {
       if (config.geoFilter.mode === 'radius') {
@@ -131,7 +127,6 @@ const MapController: React.FC<{
     },
   });
 
-  // Leaflet-Draw toolbar for Polygon / Rectangle mode
   useEffect(() => {
     if (config.geoFilter.mode !== 'polygon') {
       if (drawControlRef.current) {
@@ -149,14 +144,23 @@ const MapController: React.FC<{
     drawnLayerRef.current = drawnItems;
     map.addLayer(drawnItems);
 
-    // Seed initial editable polygon
     if (config.geoFilter.coordinates.length >= 4) {
-      const latLngs = config.geoFilter.coordinates.map(([lng, lat]) => [lat, lng] as [number, number]);
-      const poly = L.polygon(latLngs, { color: '#2563eb', weight: 2, fillOpacity: 0.1 });
+      const latLngs = config.geoFilter.coordinates.map(
+        ([lng, lat]) => [lat, lng] as [number, number]
+      );
+      const poly = L.polygon(latLngs, {
+        color: '#2563eb',
+        weight: 2,
+        fillOpacity: 0.1,
+      });
       drawnItems.addLayer(poly);
     }
 
-    const DrawControl = (L.Control as unknown as { Draw: new (opts: Record<string, unknown>) => L.Control }).Draw;
+    const DrawControl = (
+      L.Control as unknown as {
+        Draw: new (opts: Record<string, unknown>) => L.Control;
+      }
+    ).Draw;
     const control = new DrawControl({
       position: 'topright',
       draw: {
@@ -185,7 +189,7 @@ const MapController: React.FC<{
       const raw = layer.getLatLngs()[0] as L.LatLng[];
       if (!raw || raw.length < 3) return;
       const coords: [number, number][] = raw.map((ll) => [ll.lng, ll.lat]);
-      coords.push(coords[0]); // close ring for Turf.js
+      coords.push(coords[0]);
       onUpdateConfig((prev) => ({
         ...prev,
         geoFilter: { mode: 'polygon', coordinates: coords },
@@ -206,12 +210,15 @@ const MapController: React.FC<{
       });
     };
 
-    map.on((L as unknown as { Draw: { Event: { CREATED: string; EDITED: string } } }).Draw.Event.CREATED, onCreated as L.LeafletEventHandlerFn);
-    map.on((L as unknown as { Draw: { Event: { CREATED: string; EDITED: string } } }).Draw.Event.EDITED, onEdited as L.LeafletEventHandlerFn);
+    const drawEvents = (
+      L as unknown as { Draw: { Event: { CREATED: string; EDITED: string } } }
+    ).Draw.Event;
+    map.on(drawEvents.CREATED, onCreated as L.LeafletEventHandlerFn);
+    map.on(drawEvents.EDITED, onEdited as L.LeafletEventHandlerFn);
 
     return () => {
-      map.off((L as unknown as { Draw: { Event: { CREATED: string; EDITED: string } } }).Draw.Event.CREATED, onCreated as L.LeafletEventHandlerFn);
-      map.off((L as unknown as { Draw: { Event: { CREATED: string; EDITED: string } } }).Draw.Event.EDITED, onEdited as L.LeafletEventHandlerFn);
+      map.off(drawEvents.CREATED, onCreated as L.LeafletEventHandlerFn);
+      map.off(drawEvents.EDITED, onEdited as L.LeafletEventHandlerFn);
       map.removeControl(control);
       map.removeLayer(drawnItems);
     };
@@ -229,7 +236,6 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
   onSelectPoi,
   onToggleLock,
 }) => {
-  const cityPois = allPois.filter((p) => p.city === config.city);
   const stopOrderMap = new Map<string, number>();
   plan.stops.forEach((s, idx) => stopOrderMap.set(s.poi.id, idx + 1));
 
@@ -240,30 +246,48 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
 
   const initialCenter: [number, number] =
     config.city === 'taichung' ? [24.155, 120.655] : [25.045, 121.532];
+  const regionLabel = getRegionLabel(config.geoFilter);
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+    <div
+      id="map-section"
+      className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm scroll-mt-16"
+    >
       <div className="px-4 py-2.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-slate-800">
-            {config.city === 'taichung' ? '台中互動地圖' : '台北互動地圖'}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span
+            data-testid="map-region-title"
+            className="font-bold text-slate-800"
+          >
+            {regionLabel}互動地圖
           </span>
           <span className="text-slate-500">
-            {config.geoFilter.mode === 'radius'
-              ? '· 點擊地圖移動出發錨點'
-              : '· 使用右上角工具繪製或微調多邊形範圍'}
+            {config.geoFilter.mode === 'radius' ? (
+              <>
+                <span className="hidden md:inline">· 點擊右側地圖移動出發錨點</span>
+                <span className="md:hidden">· 點擊下方地圖移動出發錨點</span>
+              </>
+            ) : (
+              '· 使用右上角工具繪製或微調多邊形範圍'
+            )}
           </span>
         </div>
-        <div className="flex items-center gap-3 text-[11px] text-slate-600">
+
+        {/* 統一顏色圖例 */}
+        <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
           <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded-full bg-blue-600 text-white text-[9px] inline-flex items-center justify-center font-bold">
-              1
-            </span>
-            已排入路線
+            <span className="w-2.5 h-2.5 rounded-full bg-red-500 border border-white shadow-xs inline-block" />
+            出發錨點（紅色）
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
-            範圍內景點
+            <span className="w-3.5 h-3.5 rounded-full bg-blue-600 text-white text-[9px] inline-flex items-center justify-center font-bold">
+              1
+            </span>
+            已排入路線（藍色）
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block" />
+            範圍內候選（橘色）
           </span>
         </div>
       </div>
@@ -316,14 +340,16 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
             </>
           )}
 
-          {/* 多邊形顯示（非編輯狀態輔助顯示） */}
+          {/* 多邊形範圍 */}
           {config.geoFilter.mode === 'polygon' &&
             config.geoFilter.coordinates.length >= 4 && (
               <Polygon
-                positions={config.geoFilter.coordinates.map(([lng, lat]) => [
-                  lat,
-                  lng,
-                ] as [number, number])}
+                positions={
+                  config.geoFilter.coordinates.map(([lng, lat]) => [
+                    lat,
+                    lng,
+                  ]) as [number, number][]
+                }
                 pathOptions={{
                   color: '#2563eb',
                   weight: 1.5,
@@ -345,14 +371,11 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
           )}
 
           {/* 景點標記 */}
-          {cityPois.map((poi) => {
+          {allPois.map((poi) => {
             const stopOrder = stopOrderMap.get(poi.id);
             const inRange =
               isPoiInGeoFilter(poi, config) &&
               poi.categories.some((c) => config.selectedCategories.includes(c));
-            const catColor =
-              CATEGORY_METAS.find((c) => c.id === poi.categories[0])?.color ??
-              '#3b82f6';
 
             return (
               <Marker
@@ -361,7 +384,7 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
                 icon={
                   stopOrder
                     ? createNumberedIcon(stopOrder, focusedPoiId === poi.id)
-                    : createCategoryIcon(catColor, inRange)
+                    : createCandidateIcon(inRange)
                 }
                 zIndexOffset={stopOrder ? 500 : inRange ? 100 : 0}
                 eventHandlers={{
@@ -369,7 +392,7 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
                 }}
               >
                 <Popup>
-                  <div className="text-xs space-y-1 min-w-[160px]">
+                  <div className="text-xs space-y-1 min-w-[175px]">
                     <div className="font-bold text-slate-900">
                       {stopOrder ? `#${stopOrder} ` : ''}
                       {poi.name}
@@ -391,7 +414,7 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
                             : '＋ 加入必去'}
                         </button>
                         <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${poi.lat},${poi.lng}`}
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(poi.name)}${poi.placeId ? `&query_place_id=${poi.placeId}` : ''}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="py-1 px-2 rounded border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium"

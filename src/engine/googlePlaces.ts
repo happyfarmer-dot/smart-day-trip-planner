@@ -117,7 +117,7 @@ function loadGoogleMapsSdk(apiKey: string): Promise<void> {
 export async function fetchGooglePlacesPois(
   apiKey: string,
   geoFilter: GeoFilter,
-  city: 'taichung' | 'taipei',
+  _city: 'taichung' | 'taipei',
   keyword?: string
 ): Promise<POI[]> {
   const trimmedKey = apiKey.trim();
@@ -304,7 +304,8 @@ export async function fetchGooglePlacesPois(
             : 'Google Maps 景點';
           return {
             id: `gmap-${p.id}`,
-            city,
+            placeId: p.id,
+            city: 'live' as const,
             district: p.formattedAddress?.slice(0, 12) || 'Google Maps',
             name: p.displayName!,
             lat,
@@ -369,7 +370,8 @@ export async function fetchGooglePlacesPois(
 
           return {
             id: `gmap-${p.place_id ?? p.name}`,
-            city,
+            placeId: p.place_id,
+            city: 'live' as const,
             district: addr.slice(0, 12) || 'Google Maps',
             name: p.name!,
             lat,

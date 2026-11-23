@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { POIS } from '../data/pois';
 import type { PlannerConfig } from '../types/planner';
-import { generateDayPlan, rerollSingleStop } from './scheduler';
+import {
+  estimateTransitLeg,
+  generateDayPlan,
+  getRegionLabel,
+  rerollSingleStop,
+} from './scheduler';
 import { buildGoogleMapsDirUrl } from './export';
 
 describe('Smart Day-Trip Scheduler', () => {
@@ -14,12 +19,13 @@ describe('Smart Day-Trip Scheduler', () => {
         maxDistanceKm: 8,
       },
       selectedCategories: ['food', 'art', 'cafe'],
-      startMinutes: 600, // 10:00
-      endMinutes: 1200, // 20:00
+      startMinutes: 600,
+      endMinutes: 1200,
       pace: 'balanced',
+      transportMode: 'scooter',
       budgetNtd: 1500,
       budgetTendency: 'balanced',
-      dayOfWeek: 6, // Saturday
+      dayOfWeek: 6,
       lockedPoiIds: [],
       excludedPoiIds: [],
       rainySwaps: {},
@@ -28,14 +34,12 @@ describe('Smart Day-Trip Scheduler', () => {
     const plan = generateDayPlan(POIS, config);
     expect(plan.stops.length).toBeGreaterThanOrEqual(3);
 
-    // Check no overlapping time slots
     for (let i = 1; i < plan.stops.length; i++) {
       expect(plan.stops[i].arrivalMinutes).toBeGreaterThanOrEqual(
         plan.stops[i - 1].departureMinutes
       );
     }
 
-    // Check lunch window (11:30 - 13:30) has a food stop
     const hasLunchFood = plan.stops.some(
       (s) =>
         s.poi.categories.includes('food') &&
@@ -50,7 +54,6 @@ describe('Smart Day-Trip Scheduler', () => {
       city: 'taipei',
       geoFilter: {
         mode: 'polygon',
-        // Box around Taipei Datong / Zhongzheng
         coordinates: [
           [121.50, 25.03],
           [121.535, 25.03],
@@ -63,6 +66,7 @@ describe('Smart Day-Trip Scheduler', () => {
       startMinutes: 540,
       endMinutes: 1080,
       pace: 'balanced',
+      transportMode: 'transit',
       budgetNtd: 2000,
       budgetTendency: 'balanced',
       dayOfWeek: 0,
@@ -79,6 +83,54 @@ describe('Smart Day-Trip Scheduler', () => {
     });
   });
 
+  it('categorizes cafe into totalFoodCost and shop into totalShopCost, not tickets', () => {
+    const config: PlannerConfig = {
+      city: 'taichung',
+      geoFilter: {
+        mode: 'radius',
+        center: { lat: 24.150, lng: 120.664 },
+        maxDistanceKm: 4,
+      },
+      selectedCategories: ['cafe', 'shop'],
+      startMinutes: 600,
+      endMinutes: 1080,
+      pace: 'balanced',
+      transportMode: 'scooter',
+      budgetNtd: 3000,
+      budgetTendency: 'balanced',
+      dayOfWeek: 6,
+      lockedPoiIds: ['tc-parklane', 'tc-cama-roastery'],
+      excludedPoiIds: [],
+      rainySwaps: {},
+    };
+
+    const plan = generateDayPlan(POIS, config);
+    expect(plan.totalFoodCost).toBeGreaterThan(0);
+    expect(plan.totalShopCost).toBeGreaterThan(0);
+    expect(plan.totalTicketAndActivityCost).toBe(0);
+  });
+
+  it('computes distinct transit durations for scooter vs transit vs walk & dynamic region label', () => {
+    const a = { lat: 24.150, lng: 120.650 };
+    const b = { lat: 24.165, lng: 120.660 }; // ~1.9 km straight * 1.3 ~ 2.4 km
+    const scooterLeg = estimateTransitLeg(a, b, 'scooter');
+    const transitLeg = estimateTransitLeg(a, b, 'transit');
+    const walkLeg = estimateTransitLeg(a, b, 'walk');
+
+    expect(scooterLeg.modeLabel).toBe('騎車');
+    expect(transitLeg.modeLabel).toBe('大眾運輸');
+    expect(transitLeg.durationMinutes).toBeGreaterThan(scooterLeg.durationMinutes);
+    expect(walkLeg.isLongWalk).toBe(true);
+
+    expect(
+      getRegionLabel({
+        mode: 'radius',
+        center: { lat: 24.065, lng: 120.495 },
+        maxDistanceKm: 5,
+      })
+    ).toContain('彰化');
+  });
+
   it('rerolls a single stop and builds valid Google Maps directions URL', () => {
     const config: PlannerConfig = {
       city: 'taichung',
@@ -91,6 +143,7 @@ describe('Smart Day-Trip Scheduler', () => {
       startMinutes: 600,
       endMinutes: 1200,
       pace: 'balanced',
+      transportMode: 'scooter',
       budgetNtd: 1500,
       budgetTendency: 'balanced',
       dayOfWeek: 6,
