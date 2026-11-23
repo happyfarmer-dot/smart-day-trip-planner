@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyRound, Map as MapIcon, X } from 'lucide-react';
 import { FilterSidebar } from './components/FilterSidebar';
-import { ItineraryTimeline } from './components/ItineraryTimeline';
+import {
+  ItineraryTimeline,
+  type SavedPlanSlot,
+} from './components/ItineraryTimeline';
 import { MapWorkspace } from './components/MapWorkspace';
 import { POIS } from './data/pois';
+import { decodeTripFromHash } from './engine/export';
 import {
   fetchGooglePlacesPois,
   getSavedGoogleMapsApiKey,
@@ -18,6 +22,7 @@ import {
   recalculatePlanStops,
   rerollSingleStop,
 } from './engine/scheduler';
+import type { TaiwanCityHub } from './data/taiwanRegions';
 import type { PlannerConfig, POI, TransportMode } from './types/planner';
 
 const INITIAL_CONFIG: PlannerConfig = {
@@ -64,14 +69,55 @@ export function App() {
   const [mapDbStatus, setMapDbStatus] = useState<string | null>(null);
   const [focusedPoiId, setFocusedPoiId] = useState<string | null>(null);
   const [flyTrigger, setFlyTrigger] = useState(0);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [mobileTarget, setMobileTarget] = useState<'map' | 'itinerary'>('map');
 
   const [gmapsKey, setGmapsKey] = useState(() => getSavedGoogleMapsApiKey());
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [keyDraft, setKeyDraft] = useState(() => getSavedGoogleMapsApiKey());
 
+  const [savedPlans, setSavedPlans] = useState<SavedPlanSlot[]>(() => {
+    try {
+      const raw = localStorage.getItem('smart_trip_saved_plans_v1');
+      return raw ? (JSON.parse(raw) as SavedPlanSlot[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const allPois = useMemo(() => mergePoiLists(POIS, livePois), [livePois]);
   const [plan, setPlan] = useState(() => generateDayPlan(POIS, INITIAL_CONFIG));
+
+  useEffect(() => {
+    const shared = decodeTripFromHash(window.location.hash);
+    if (!shared) return;
+    const restoredConfig: PlannerConfig = {
+      ...INITIAL_CONFIG,
+      city: shared.city,
+      geoFilter: shared.geoFilter,
+      transportMode: shared.transportMode,
+      startMinutes: shared.startMinutes,
+      endMinutes: shared.endMinutes,
+      budgetNtd: shared.budgetNtd,
+      stayOverrides: shared.stayOverrides,
+    };
+    setConfig(restoredConfig);
+    setFlyTrigger((n) => n + 1);
+    const matchedStops = shared.stopIds
+      .map((id) => POIS.find((p) => p.id === id))
+      .filter((p): p is POI => Boolean(p))
+      .map((poi) => ({
+        poi,
+        arrivalMinutes: 0,
+        departureMinutes: 0,
+        stayMinutes: 60,
+        isLocked: false,
+        isMealSlot: false,
+      }));
+    if (matchedStops.length > 0) {
+      setPlan(recalculatePlanStops(matchedStops, matchedStops.length, restoredConfig, POIS));
+    }
+  }, []);
 
   const eligibleCount = useMemo(
     () => filterEligiblePois(allPois, config).length,
@@ -188,12 +234,17 @@ export function App() {
   };
 
   const handleRerollStop = (index: number) => {
-    const { nextConfig, nextPlan } = rerollSingleStop(
+    const { nextConfig, nextPlan, message } = rerollSingleStop(
       plan,
       index,
       allPois,
       config
     );
+    if (message) {
+      setToastMsg(message);
+      setTimeout(() => setToastMsg(null), 3000);
+      return;
+    }
     setConfig(nextConfig);
     setPlan(nextPlan);
   };
@@ -202,14 +253,11 @@ export function App() {
     setPlan((prev) => moveStopInPlan(prev, index, direction, config, allPois));
   };
 
-  const handleCityPreset = (city: 'taichung' | 'taipei') => {
-    const center =
-      city === 'taichung'
-        ? { lat: 24.155, lng: 120.655 }
-        : { lat: 25.045, lng: 121.532 };
+  const handleCityPreset = (hub: TaiwanCityHub) => {
+    const center = { lat: hub.lat, lng: hub.lng };
     const nextConfig: PlannerConfig = {
       ...config,
-      city,
+      city: hub.id,
       geoFilter: {
         mode: 'radius',
         center,
@@ -229,6 +277,65 @@ export function App() {
     setConfig(nextConfig);
     setFlyTrigger((n) => n + 1);
     setPlan(generateDayPlan(allPois, nextConfig));
+  };
+
+  const handleAdjustStay = (poiId: string, deltaMinutes: number) => {
+    const currentStop = plan.stops.find((s) => s.poi.id === poiId);
+    const currentStay = currentStop?.stayMinutes ?? 60;
+    const nextStay = Math.min(240, Math.max(15, currentStay + deltaMinutes));
+    const nextConfig: PlannerConfig = {
+      ...config,
+      stayOverrides: {
+        ...(config.stayOverrides ?? {}),
+        [poiId]: nextStay,
+      },
+    };
+    setConfig(nextConfig);
+    setPlan((prev) =>
+      recalculatePlanStops(prev.stops, prev.eligibleCount, nextConfig, allPois)
+    );
+  };
+
+  const handleSavePlan = () => {
+    const slot: SavedPlanSlot = {
+      id: `plan-${Date.now()}`,
+      label: `方案 ${savedPlans.length + 1} (${plan.stops.length}站)`,
+      savedAt: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }),
+      config,
+      stopIds: plan.stops.map((s) => s.poi.id),
+    };
+    const next = [...savedPlans.slice(-4), slot];
+    setSavedPlans(next);
+    try {
+      localStorage.setItem('smart_trip_saved_plans_v1', JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+    setToastMsg(`已儲存「${slot.label}」`);
+    setTimeout(() => setToastMsg(null), 2500);
+  };
+
+  const handleLoadPlan = (slot: SavedPlanSlot) => {
+    setConfig(slot.config);
+    setFlyTrigger((n) => n + 1);
+    const matchedStops = slot.stopIds
+      .map((id) => allPois.find((p) => p.id === id))
+      .filter((p): p is POI => Boolean(p))
+      .map((poi) => ({
+        poi,
+        arrivalMinutes: 0,
+        departureMinutes: 0,
+        stayMinutes: 60,
+        isLocked: false,
+        isMealSlot: false,
+      }));
+    if (matchedStops.length > 0) {
+      setPlan(recalculatePlanStops(matchedStops, matchedStops.length, slot.config, allPois));
+    } else {
+      setPlan(generateDayPlan(allPois, slot.config));
+    }
+    setToastMsg(`已切換至「${slot.label}」`);
+    setTimeout(() => setToastMsg(null), 2500);
   };
 
   const handleToggleRainyPlanB = (originalPoi: POI) => {
@@ -386,14 +493,28 @@ export function App() {
             config={config}
             allPois={allPois}
             focusedPoiId={focusedPoiId}
+            savedPlans={savedPlans}
             onFocusStop={(id) => setFocusedPoiId(id)}
             onToggleLock={handleToggleLock}
             onRerollStop={handleRerollStop}
             onMoveStop={handleMoveStop}
+            onAdjustStay={handleAdjustStay}
             onToggleRainyPlanB={handleToggleRainyPlanB}
+            onSavePlan={handleSavePlan}
+            onLoadPlan={handleLoadPlan}
           />
         </div>
       </main>
+
+      {/* Toast 提示 */}
+      {toastMsg && (
+        <div
+          data-testid="toast-msg"
+          className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-slate-900 text-white text-xs font-medium shadow-lg"
+        >
+          {toastMsg}
+        </div>
+      )}
 
       {/* 手機版懸浮快速切換按鈕 */}
       {plan.stops.length > 0 && (

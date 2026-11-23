@@ -2,6 +2,44 @@ import * as turf from '@turf/turf';
 import type { CategoryId, GeoFilter, POI } from '../types/planner';
 
 const GMAPS_KEY_STORAGE = 'smart_trip_gmaps_api_key';
+const GPLACES_CACHE_STORAGE = 'smart_trip_gplaces_cache_v1';
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 30;
+
+interface SpatialCacheEntry {
+  key: string;
+  timestamp: number;
+  pois: POI[];
+}
+
+function readSpatialCache(cacheKey: string): POI[] | null {
+  try {
+    const raw = localStorage.getItem(GPLACES_CACHE_STORAGE);
+    if (!raw) return null;
+    const list = JSON.parse(raw) as SpatialCacheEntry[];
+    const now = Date.now();
+    const hit = list.find((e) => e.key === cacheKey && now - e.timestamp < CACHE_TTL_MS);
+    return hit ? hit.pois : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSpatialCache(cacheKey: string, pois: POI[]): void {
+  try {
+    const raw = localStorage.getItem(GPLACES_CACHE_STORAGE);
+    const now = Date.now();
+    let list: SpatialCacheEntry[] = raw ? (JSON.parse(raw) as SpatialCacheEntry[]) : [];
+    list = list.filter((e) => e.key !== cacheKey && now - e.timestamp < CACHE_TTL_MS);
+    list.push({ key: cacheKey, timestamp: now, pois });
+    if (list.length > MAX_CACHE_ENTRIES) {
+      list = list.slice(list.length - MAX_CACHE_ENTRIES);
+    }
+    localStorage.setItem(GPLACES_CACHE_STORAGE, JSON.stringify(list));
+  } catch {
+    // ignore quota errors
+  }
+}
 
 export function getSavedGoogleMapsApiKey(): string {
   try {
@@ -209,7 +247,7 @@ export function buildRingSampleCenters(
 export async function fetchGooglePlacesPois(
   apiKey: string,
   geoFilter: GeoFilter,
-  _city: 'taichung' | 'taipei',
+  _city: string,
   keyword?: string
 ): Promise<POI[]> {
   const trimmedKey = apiKey.trim();
@@ -236,6 +274,13 @@ export async function fetchGooglePlacesPois(
 
   const maxDistKm = geoFilter.mode === 'radius' ? geoFilter.maxDistanceKm : 8;
   const intraKm = geoFilter.mode === 'radius' ? geoFilter.intraZoneDistanceKm : 8;
+  const trimmedQuery = keyword?.trim();
+  const cacheKey = `${center.lat.toFixed(2)}_${center.lng.toFixed(2)}_${maxDistKm}_${trimmedQuery || 'all'}`;
+
+  const cached = readSpatialCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
   const sampleCenters =
     geoFilter.mode === 'radius' && !keyword?.trim()
       ? buildRingSampleCenters(center, maxDistKm)
@@ -341,8 +386,6 @@ export async function fetchGooglePlacesPois(
     };
   };
 
-  const trimmedQuery = keyword?.trim();
-
   // 1. Try New Places JS API (Place.searchNearby / Place.searchByText)
   try {
     const placesLib = g.google?.maps?.importLibrary
@@ -431,13 +474,15 @@ export async function fetchGooglePlacesPois(
         if (!p.displayName || !p.location || seen.has(p.id)) continue;
         seen.add(p.id);
         const mapped = mapGoogleTypesToCategories(p.types);
-        const cleanAddress = p.formattedAddress?.replace(/^\d{3,6}\s*(?:台灣|臺灣)?/, '').trim();
+        const rawClean = p.formattedAddress?.replace(/^\d{3,6}\s*(?:台灣|臺灣)?/, '').trim();
+        const isGenericTaiwan = !rawClean || /^(台灣|臺灣|taiwan)$/i.test(rawClean);
+        const district = extractTaiwanDistrict(p.formattedAddress);
         const isDining = mapped.categories.includes('food') || mapped.categories.includes('cafe');
         pois.push({
           id: `gmap-${p.id}`,
           placeId: p.id,
           city: 'live',
-          district: extractTaiwanDistrict(p.formattedAddress),
+          district,
           name: cleanGooglePlaceName(p.displayName),
           lat: p.location.lat(),
           lng: p.location.lng(),
@@ -452,9 +497,10 @@ export async function fetchGooglePlacesPois(
           isIndoor: mapped.isIndoor,
           rating: p.rating,
           reviewCount: p.userRatingCount,
-          highlight: cleanAddress || 'Google Maps 精選熱門地點',
+          highlight: isGenericTaiwan ? `${district}熱門地標` : rawClean,
         });
       }
+      writeSpatialCache(cacheKey, pois);
       return pois;
     }
   } catch {

@@ -83,3 +83,43 @@ export function buildIcsContent(plan: DayPlan): string {
     'END:VCALENDAR',
   ].join('\r\n');
 }
+
+export interface SharedTripPayload {
+  city: string;
+  geoFilter: PlannerConfig['geoFilter'];
+  transportMode: PlannerConfig['transportMode'];
+  startMinutes: number;
+  endMinutes: number;
+  budgetNtd: number;
+  stopIds: string[];
+  stayOverrides?: Record<string, number>;
+}
+
+export function encodeTripToHash(config: PlannerConfig, plan: DayPlan): string {
+  const payload: SharedTripPayload = {
+    city: config.city,
+    geoFilter: config.geoFilter,
+    transportMode: config.transportMode,
+    startMinutes: config.startMinutes,
+    endMinutes: config.endMinutes,
+    budgetNtd: config.budgetNtd,
+    stopIds: plan.stops.map((s) => s.poi.id),
+    stayOverrides: config.stayOverrides,
+  };
+  const json = JSON.stringify(payload);
+  const encoded = btoa(unescape(encodeURIComponent(json)));
+  return `#trip=${encoded}`;
+}
+
+export function decodeTripFromHash(hash: string): SharedTripPayload | null {
+  try {
+    if (!hash.startsWith('#trip=')) return null;
+    const encoded = hash.slice(6);
+    const json = decodeURIComponent(escape(atob(encoded)));
+    const parsed = JSON.parse(json) as SharedTripPayload;
+    if (!parsed || !Array.isArray(parsed.stopIds)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}

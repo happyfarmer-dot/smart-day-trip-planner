@@ -19,20 +19,33 @@ import {
   buildGoogleMapsDirUrl,
   buildIcsContent,
   buildMarkdownItinerary,
+  encodeTripToHash,
 } from '../engine/export';
 import { formatMinutes } from '../engine/scheduler';
 import type { DayPlan, PlannerConfig, POI } from '../types/planner';
+
+export interface SavedPlanSlot {
+  id: string;
+  label: string;
+  savedAt: string;
+  config: PlannerConfig;
+  stopIds: string[];
+}
 
 interface ItineraryTimelineProps {
   plan: DayPlan;
   config: PlannerConfig;
   allPois: POI[];
   focusedPoiId: string | null;
+  savedPlans: SavedPlanSlot[];
   onFocusStop: (poiId: string) => void;
   onToggleLock: (poiId: string) => void;
   onRerollStop: (index: number) => void;
   onMoveStop: (index: number, direction: -1 | 1) => void;
+  onAdjustStay: (poiId: string, deltaMinutes: number) => void;
   onToggleRainyPlanB: (originalPoi: POI) => void;
+  onSavePlan: () => void;
+  onLoadPlan: (slot: SavedPlanSlot) => void;
 }
 
 export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
@@ -40,14 +53,32 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
   config,
   allPois,
   focusedPoiId,
+  savedPlans,
   onFocusStop,
   onToggleLock,
   onRerollStop,
   onMoveStop,
+  onAdjustStay,
   onToggleRainyPlanB,
+  onSavePlan,
+  onLoadPlan,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
   const gmapsUrl = buildGoogleMapsDirUrl(plan.stops);
+
+  const handleCopyShareLink = async () => {
+    const hash = encodeTripToHash(config, plan);
+    const shareUrl = `${window.location.origin}${window.location.pathname}${hash}`;
+    window.history.replaceState(null, '', hash);
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      // Fallback
+    }
+  };
 
   const handleCopyMarkdown = async () => {
     const md = buildMarkdownItinerary(plan, config);
@@ -184,6 +215,39 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                 下載 .ics
               </button>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                data-testid="export-share-url"
+                onClick={handleCopyShareLink}
+                className="w-full py-2 px-3 rounded-lg border border-blue-200 bg-blue-50/70 hover:bg-blue-100 text-blue-700 text-xs font-medium flex items-center justify-center gap-1.5 transition"
+              >
+                {shareCopied ? '✅ 已複製分享連結' : '🔗 複製分享連結'}
+              </button>
+              <button
+                type="button"
+                data-testid="save-plan-btn"
+                onClick={onSavePlan}
+                className="w-full py-2 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium flex items-center justify-center gap-1.5 transition"
+              >
+                💾 儲存目前方案
+              </button>
+            </div>
+            {savedPlans.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
+                <span className="text-slate-500">📂 已存方案：</span>
+                {savedPlans.map((sp) => (
+                  <button
+                    key={sp.id}
+                    type="button"
+                    onClick={() => onLoadPlan(sp)}
+                    className="px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 hover:border-blue-400 hover:text-blue-700 transition"
+                  >
+                    {sp.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -355,12 +419,39 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                         className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-100 text-[11px]"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="flex items-center gap-2 text-slate-500">
+                        <div className="flex items-center gap-2 text-slate-500 flex-wrap">
                           <span className="inline-flex items-center gap-1">
                             <MapPin className="w-3 h-3" />
                             {stop.poi.district}
                           </span>
-                          <span>· 停留 {stop.stayMinutes} 分</span>
+                          <span className="inline-flex items-center gap-1">
+                            · 停留
+                            <button
+                              type="button"
+                              data-testid={`stay-minus-${idx}`}
+                              disabled={stop.stayMinutes <= 15}
+                              onClick={() => onAdjustStay(stop.poi.id, -15)}
+                              className="w-4 h-4 rounded border border-slate-200 hover:border-blue-400 text-slate-600 disabled:opacity-30 inline-flex items-center justify-center font-bold"
+                            >
+                              -
+                            </button>
+                            <span
+                              data-testid={`stay-mins-${idx}`}
+                              className="font-semibold text-slate-700 tabular-nums"
+                            >
+                              {stop.stayMinutes}
+                            </span>
+                            <button
+                              type="button"
+                              data-testid={`stay-plus-${idx}`}
+                              disabled={stop.stayMinutes >= 240}
+                              onClick={() => onAdjustStay(stop.poi.id, 15)}
+                              className="w-4 h-4 rounded border border-slate-200 hover:border-blue-400 text-slate-600 disabled:opacity-30 inline-flex items-center justify-center font-bold"
+                            >
+                              +
+                            </button>
+                            分
+                          </span>
                           <span>· {stop.poi.isIndoor ? '室內' : '戶外'}</span>
                         </div>
 
@@ -375,6 +466,18 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                             <ExternalLink className="w-3 h-3" />
                             📍 Google 評論/地圖
                           </a>
+
+                          {config.transportMode === 'drive' && (
+                            <a
+                              data-testid={`parking-btn-${idx}`}
+                              href={`https://www.google.com/maps/search/停車場/@${stop.poi.lat},${stop.poi.lng},16z`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 flex items-center gap-1 font-medium transition"
+                            >
+                              🅿️ 找停車場
+                            </a>
+                          )}
 
                           {showRainyBtn && (backupPoi || stop.activeRainyPlanB) && (
                             <button

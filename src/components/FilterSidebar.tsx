@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Bike,
   Bus,
@@ -14,6 +14,12 @@ import {
   Tag,
 } from 'lucide-react';
 import { CATEGORY_METAS } from '../data/pois';
+import {
+  TAIWAN_CITIES,
+  TAIWAN_REGIONS,
+  type TaiwanCityHub,
+  type TaiwanRegionId,
+} from '../data/taiwanRegions';
 import type {
   BudgetTendency,
   CategoryId,
@@ -35,7 +41,7 @@ interface FilterSidebarProps {
   onSearchSubmit: (keyword?: string) => void;
   onFocusPoi: (poiId: string) => void;
   onToggleLock: (poiId: string) => void;
-  onCityPreset: (city: 'taichung' | 'taipei') => void;
+  onCityPreset: (hub: TaiwanCityHub) => void;
   onChange: (updater: (prev: PlannerConfig) => PlannerConfig) => void;
   onTransportChange: (mode: TransportMode) => void;
   onGenerate: () => void;
@@ -79,7 +85,9 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   onTransportChange,
   onGenerate,
 }) => {
+  const [activeRegion, setActiveRegion] = useState<TaiwanRegionId>('central');
   const totalHours = Math.max(1, (config.endMinutes - config.startMinutes) / 60);
+  const regionCities = TAIWAN_CITIES.filter((c) => c.region === activeRegion);
 
   const toggleCategory = (id: CategoryId) => {
     onChange((prev) => {
@@ -108,32 +116,49 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           </span>
         </div>
 
-        {/* 快速城市跳轉 */}
-        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-slate-100 text-xs">
-          <button
-            type="button"
-            data-testid="city-taichung"
-            onClick={() => onCityPreset('taichung')}
-            className={`py-1.5 px-1 rounded-md font-medium transition text-[11px] ${
-              config.city === 'taichung'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
+        {/* 全台 22 縣市：區域分頁 + 橫向可滑動膠囊列 */}
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-5 gap-1 p-1 rounded-lg bg-slate-100 text-[11px]">
+            {TAIWAN_REGIONS.map((reg) => (
+              <button
+                key={reg.id}
+                type="button"
+                data-testid={`region-${reg.id}`}
+                onClick={() => setActiveRegion(reg.id)}
+                className={`py-1 rounded-md font-medium transition cursor-pointer ${
+                  activeRegion === reg.id
+                    ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {reg.label}
+              </button>
+            ))}
+          </div>
+
+          <div
+            className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar"
+            data-testid="city-pills-row"
           >
-            台中（西屯／北區／海線）
-          </button>
-          <button
-            type="button"
-            data-testid="city-taipei"
-            onClick={() => onCityPreset('taipei')}
-            className={`py-1.5 px-1 rounded-md font-medium transition text-[11px] ${
-              config.city === 'taipei'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            台北（市區／北投／淡水）
-          </button>
+            {regionCities.map((hub) => {
+              const active = config.city === hub.id;
+              return (
+                <button
+                  key={hub.id}
+                  type="button"
+                  data-testid={`city-${hub.id}`}
+                  onClick={() => onCityPreset(hub)}
+                  className={`px-2.5 py-1 rounded-full border text-[11px] font-medium whitespace-nowrap shrink-0 transition cursor-pointer ${
+                    active
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 font-semibold'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {hub.name}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* 雙模式切換 */}

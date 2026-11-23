@@ -348,7 +348,8 @@ function buildStopsFromSequence(
       : undefined;
     const arrival =
       currentMinutes + (transitFromPrev ? transitFromPrev.durationMinutes : 0);
-    const stay = getStayMinutes(poi, config.pace);
+    const stay =
+      config.stayOverrides?.[poi.id] ?? getStayMinutes(poi, config.pace);
     const departure = arrival + stay;
 
     const isLunchWindow = arrival >= 690 && arrival <= 810; // 11:30 - 13:30
@@ -746,7 +747,7 @@ export function rerollSingleStop(
   stopIndex: number,
   allPois: POI[],
   config: PlannerConfig
-): { nextConfig: PlannerConfig; nextPlan: DayPlan } {
+): { nextConfig: PlannerConfig; nextPlan: DayPlan; message?: string } {
   const target = currentPlan.stops[stopIndex];
   if (!target) return { nextConfig: config, nextPlan: currentPlan };
 
@@ -760,8 +761,73 @@ export function rerollSingleStop(
     lockedPoiIds: nextLocked,
   };
 
-  return {
+  // Current stops in itinerary (exclude all of them + skipped/excluded)
+  const currentIds = new Set(
+    currentPlan.stops.map((s) => s.originalOutdoorPoi?.id ?? s.poi.id)
+  );
+  const excludedSet = new Set(nextExcluded);
+
+  const isTargetFood =
+    target.isMealSlot || target.poi.categories.includes('food');
+
+  const prevStop = stopIndex > 0 ? currentPlan.stops[stopIndex - 1]?.poi : undefined;
+  const nextStop =
+    stopIndex < currentPlan.stops.length - 1
+      ? currentPlan.stops[stopIndex + 1]?.poi
+      : undefined;
+
+  // Candidate pool: same role (food vs attraction), in geoFilter, respects rating/review filter
+  const candidates = allPois.filter((p) => {
+    if (currentIds.has(p.id) || excludedSet.has(p.id)) return false;
+    if (!isPoiInGeoFilter(p, nextConfig)) return false;
+    if (p.closedDays.includes(nextConfig.dayOfWeek)) return false;
+    if (!meetsRatingFilter(p, nextConfig.minRating, nextConfig.minReviews)) {
+      return false;
+    }
+    if (isTargetFood) {
+      return p.categories.includes('food');
+    }
+    return isAttractionPoi(p);
+  });
+
+  if (candidates.length === 0) {
+    return {
+      nextConfig: config,
+      nextPlan: currentPlan,
+      message: '範圍內已無其他符合條件的同類替代地點',
+    };
+  }
+
+  // Score by minimum detour distance + reputation score
+  const scored = candidates
+    .map((cand) => {
+      const dPrev = prevStop ? calcStraightDistanceKm(prevStop, cand) : 0;
+      const dNext = nextStop ? calcStraightDistanceKm(cand, nextStop) : 0;
+      const detour = dPrev + dNext;
+      const rep = calcReputationScore(cand);
+      return { cand, score: detour * 1.5 - rep * 1.2 };
+    })
+    .sort((a, b) => a.score - b.score);
+
+  const replacement = scored[0].cand;
+  const updatedStops = currentPlan.stops.map((s, idx) =>
+    idx === stopIndex
+      ? {
+          ...s,
+          poi: replacement,
+          isLocked: false,
+          activeRainyPlanB: false,
+          originalOutdoorPoi: undefined,
+        }
+      : s
+  );
+
+  const nextPlan = recalculatePlanStops(
+    updatedStops,
+    currentPlan.eligibleCount,
     nextConfig,
-    nextPlan: generateDayPlan(allPois, nextConfig),
-  };
+    allPois
+  );
+
+  return { nextConfig, nextPlan };
 }

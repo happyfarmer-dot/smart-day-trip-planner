@@ -18,7 +18,7 @@ export interface CategoryMeta {
 export interface POI {
   id: string;
   placeId?: string;             // Google Places ID (for direct review/map link)
-  city: 'taichung' | 'taipei' | 'live';
+  city: string;
   district: string;
   name: string;
   lat: number;
@@ -53,7 +53,7 @@ export type BudgetTendency = 'saver' | 'balanced' | 'foodie';
 export type TransportMode = 'drive' | 'scooter' | 'transit' | 'walk';
 
 export interface PlannerConfig {
-  city: 'taichung' | 'taipei';
+  city: string;
   geoFilter: GeoFilter;
   selectedCategories: CategoryId[];
   minRating: number;            // 0 | 3.8 | 4.0 | 4.2 | 4.5 (default 4.0)
@@ -68,6 +68,7 @@ export interface PlannerConfig {
   lockedPoiIds: string[];
   excludedPoiIds: string[];
   rainySwaps: Record<string, string>; // originalPoiId -> backupPoiId
+  stayOverrides?: Record<string, number>; // poiId -> custom stay minutes
 }
 
 export interface TransitLeg {

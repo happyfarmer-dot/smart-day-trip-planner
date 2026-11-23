@@ -52,7 +52,7 @@ out center 220;
 `.trim();
 }
 
-function mapOsmTagsToPoi(el: OverpassElement, _city: 'taichung' | 'taipei'): POI | null {
+function mapOsmTagsToPoi(el: OverpassElement, _city: string): POI | null {
   const tags = el.tags;
   if (!tags || !tags.name) return null;
 
@@ -154,7 +154,7 @@ function mapOsmTagsToPoi(el: OverpassElement, _city: 'taichung' | 'taipei'): POI
 
 export function parseOverpassElements(
   elements: OverpassElement[],
-  city: 'taichung' | 'taipei'
+  city: string
 ): POI[] {
   const seenNames = new Set<string>();
   const results: POI[] = [];
@@ -173,7 +173,7 @@ export function parseOverpassElements(
 
 export async function fetchLiveMapPois(
   geoFilter: GeoFilter,
-  city: 'taichung' | 'taipei',
+  city: string,
   keyword?: string
 ): Promise<POI[]> {
   const query = buildOverpassQuery(geoFilter, keyword);
