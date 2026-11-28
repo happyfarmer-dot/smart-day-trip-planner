@@ -244,10 +244,10 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
   const stopOrderMap = new Map<string, number>();
   plan.stops.forEach((s, idx) => stopOrderMap.set(s.poi.id, idx + 1));
 
-  const routeLatLngs: [number, number][] = plan.stops.map((s) => [
-    s.poi.lat,
-    s.poi.lng,
-  ]);
+  const routeLatLngs: [number, number][] =
+    plan.routeGeometry && plan.routeGeometry.length > 1
+      ? plan.routeGeometry
+      : plan.stops.map((s) => [s.poi.lat, s.poi.lng]);
 
   const initialCenter: [number, number] =
     config.city === 'taichung' ? [24.155, 120.655] : [25.045, 121.532];
@@ -266,6 +266,14 @@ export const MapWorkspace: React.FC<MapWorkspaceProps> = ({
           >
             {regionLabel}互動地圖
           </span>
+          {plan.isOsrmRouted && (
+            <span
+              data-testid="osrm-badge"
+              className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-semibold"
+            >
+              OSRM 真實路網
+            </span>
+          )}
           <span className="text-slate-500">
             {config.geoFilter.mode === 'radius' ? (
               <>

@@ -418,6 +418,11 @@ export function summarizePlan(
         )
       : undefined;
 
+  const returnArrivalMinutes =
+    returnLeg && stops.length > 0
+      ? stops[stops.length - 1].departureMinutes + returnLeg.durationMinutes
+      : undefined;
+
   const totalCostNtd =
     totalTicketAndActivityCost + totalFoodCost + totalShopCost + totalTransitCost;
   const isOverBudget = totalCostNtd > config.budgetNtd;
@@ -429,10 +434,20 @@ export function summarizePlan(
     );
   }
 
+  if (
+    returnArrivalMinutes !== undefined &&
+    returnArrivalMinutes > config.endMinutes + 15
+  ) {
+    warnings.push(
+      `預計返抵出發點時間 ${formatMinutes(returnArrivalMinutes)} 已超過設定的回到出發點時間 ${formatMinutes(config.endMinutes)}，建議縮短停留時間或減少站點。`
+    );
+  }
+
   return {
     stops,
     outboundLeg,
     returnLeg,
+    returnArrivalMinutes,
     eligibleCount,
     totalTicketAndActivityCost,
     totalFoodCost,
@@ -654,7 +669,11 @@ export function generateDayPlan(allPois: POI[], config: PlannerConfig): DayPlan 
         const departure = arrival + stay;
 
         const isOpen = arrival >= cand.openMinutes && departure <= cand.closeMinutes;
-        const fitsTime = departure <= config.endMinutes + 15;
+        const returnTransit = isRadiusMode
+          ? estimateTransitLeg(cand, anchor, config.transportMode)
+          : { durationMinutes: 0 };
+        const fitsTime =
+          departure + returnTransit.durationMinutes <= config.endMinutes + 15;
 
         // Reputation-weighted score: rating * log10(reviewCount + 10)
         const rep = calcReputationScore(cand);

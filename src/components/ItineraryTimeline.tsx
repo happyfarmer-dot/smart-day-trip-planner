@@ -122,6 +122,14 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
                   {plan.outboundLeg.durationMinutes} 分）
                 </span>
               )}
+              {plan.returnArrivalMinutes !== undefined && (
+                <span
+                  data-testid="summary-return-arrival"
+                  className="ml-1.5 text-emerald-700 font-semibold tabular-nums"
+                >
+                  · 預計返抵 {formatMinutes(plan.returnArrivalMinutes)}
+                </span>
+              )}
             </p>
           </div>
           <div className="text-right">
@@ -533,15 +541,30 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
           {plan.returnLeg && plan.stops.length > 0 && (
             <div
               data-testid="return-leg"
-              className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-700"
+              className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${
+                plan.returnArrivalMinutes !== undefined &&
+                plan.returnArrivalMinutes > config.endMinutes + 15
+                  ? 'border-amber-300 bg-amber-50 text-amber-900'
+                  : 'border-slate-200 bg-slate-100 text-slate-700'
+              }`}
             >
-              <Navigation className="w-3.5 h-3.5 shrink-0 text-slate-600" />
-              <span className="font-medium tabular-nums">
-                第 {plan.stops.length} 站 → 返回出發點（回程移動：
-                {plan.returnLeg.modeLabel} · {plan.returnLeg.distanceKm} km · 約{' '}
-                {plan.returnLeg.durationMinutes} 分鐘 ·{' '}
-                {plan.returnLeg.costLabel}）
-              </span>
+              <div className="flex items-center gap-2">
+                <Navigation className="w-3.5 h-3.5 shrink-0 text-slate-600" />
+                <span className="font-medium tabular-nums">
+                  第 {plan.stops.length} 站 → 返回出發點（回程移動：
+                  {plan.returnLeg.modeLabel} · {plan.returnLeg.distanceKm} km · 約{' '}
+                  {plan.returnLeg.durationMinutes} 分鐘 ·{' '}
+                  {plan.returnLeg.costLabel}）
+                </span>
+              </div>
+              {plan.returnArrivalMinutes !== undefined && (
+                <span
+                  data-testid="return-arrival-time"
+                  className="font-bold tabular-nums px-2 py-0.5 rounded bg-white/80 border border-slate-200 text-slate-900"
+                >
+                  預計返抵時間：{formatMinutes(plan.returnArrivalMinutes)}
+                </span>
+              )}
             </div>
           )}
           </>

@@ -14,6 +14,7 @@ import {
   saveGoogleMapsApiKey,
 } from './engine/googlePlaces';
 import { fetchLiveMapPois } from './engine/overpass';
+import { enrichPlanWithOsrm } from './engine/osrm';
 import {
   filterEligiblePois,
   findNearestRainyBackup,
@@ -200,6 +201,38 @@ export function App() {
     }, 800);
     return () => clearTimeout(timer);
   }, [config.city, config.geoFilter, handleFetchLiveMapDb]);
+
+  // OSRM real-road routing enrichment for drive / scooter / walk (transit keeps single avg speed)
+  const osrmRouteKey = useMemo(() => {
+    if (config.transportMode === 'transit' || plan.stops.length === 0) return '';
+    const stopsSig = plan.stops
+      .map((s) => `${s.poi.id}:${s.stayMinutes}`)
+      .join('|');
+    const geoSig =
+      config.geoFilter.mode === 'radius'
+        ? `r:${config.geoFilter.center.lat.toFixed(4)},${config.geoFilter.center.lng.toFixed(4)}`
+        : `p:${config.geoFilter.coordinates.length}`;
+    return `${config.transportMode}|${config.startMinutes}|${config.endMinutes}|${geoSig}|${stopsSig}`;
+  }, [
+    config.transportMode,
+    config.startMinutes,
+    config.endMinutes,
+    config.geoFilter,
+    plan.stops,
+  ]);
+
+  useEffect(() => {
+    if (!osrmRouteKey || plan.isOsrmRouted) return;
+    let cancelled = false;
+    enrichPlanWithOsrm(plan, config).then((enriched) => {
+      if (!cancelled && enriched.isOsrmRouted) {
+        setPlan(enriched);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [osrmRouteKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerate = () => {
     const cleaned: PlannerConfig = {

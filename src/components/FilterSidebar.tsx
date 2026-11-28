@@ -582,7 +582,12 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
             </select>
           </div>
           <div>
-            <label className="block text-slate-500 mb-1">結束時間</label>
+            <label
+              data-testid="end-time-label"
+              className="block text-slate-500 mb-1 text-[11px] whitespace-nowrap"
+            >
+              回到出發點的時間
+            </label>
             <select
               data-testid="end-time"
               value={config.endMinutes}

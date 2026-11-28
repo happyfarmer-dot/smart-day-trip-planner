@@ -72,12 +72,13 @@ export interface PlannerConfig {
 }
 
 export interface TransitLeg {
-  distanceKm: number;           // 直線距離 * 1.3 迂迴係數
-  durationMinutes: number;      // 依交通方式計算之移動時間
+  distanceKm: number;           // 直線距離 * 1.3 迂迴係數（或 OSRM 真實路網距離）
+  durationMinutes: number;      // 依交通方式計算之移動時間（或 OSRM 真實路程時間）
   estimatedCostNtd: number;     // 預估交通／油資／停車費
   modeLabel: '開車' | '騎車' | '大眾運輸' | '步行';
   costLabel: string;
   isLongWalk?: boolean;         // 步行超過 1.5 km 提醒
+  isOsrm?: boolean;             // 是否為 OSRM 路網真實估算
 }
 
 export interface ScheduledStop {
@@ -98,6 +99,9 @@ export interface DayPlan {
   stops: ScheduledStop[];
   outboundLeg?: TransitLeg;     // 出發點 -> 第 1 站去程遠征段
   returnLeg?: TransitLeg;       // 最後一站 -> 返回出發點回程段
+  returnArrivalMinutes?: number; // 預計返抵出發點時間（分鐘）
+  routeGeometry?: [number, number][]; // OSRM 沿路折線 [lat, lng][]
+  isOsrmRouted?: boolean;       // 本次路線是否成功套用 OSRM 路網
   eligibleCount: number;
   totalTicketAndActivityCost: number; // 門票體驗
   totalFoodCost: number;              // 餐飲咖啡

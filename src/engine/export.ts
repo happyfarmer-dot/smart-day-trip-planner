@@ -46,6 +46,12 @@ export function buildMarkdownItinerary(plan: DayPlan, config: PlannerConfig): st
     lines.push(`   ${s.poi.highlight}`);
   });
 
+  if (plan.returnLeg && plan.returnArrivalMinutes !== undefined) {
+    lines.push(
+      `  ↳ 回程返回出發點（${plan.returnLeg.modeLabel} 約 ${plan.returnLeg.durationMinutes} 分鐘 · ${plan.returnLeg.distanceKm} km）→ 預計返抵時間：${formatMinutes(plan.returnArrivalMinutes)}`
+    );
+  }
+
   return lines.join('\n');
 }
 
